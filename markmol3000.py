@@ -4,7 +4,8 @@ from rdkit.Chem.rdchem import Atom
 from rdkit.Chem.Draw import ShowMol, MolsToImage #only for debugging
 import os
 
-FILENAME = "molfiles\\exx12.1.mol"
+FILENAME = "molfiles\\ext10.1.mol"
+DEBUG = True
 
 class MarkMol3000(object):
 
@@ -14,9 +15,17 @@ class MarkMol3000(object):
     def generate_markinchi(self):
         #Generates the MarkInChI for the loaded v3000 .mol file
 
-        core, rgroups = self.read_molfile_lines(self.molfile_lines)
-        
+        #Parse the molfile to generate:
+        #core - Mol for the core of the molecule
+        #rgroups - list of RGroup objects
+        #varattachs - list of VarAttach objects
+        read_output = self.read_molfile_lines(self.molfile_lines)
 
+        core = read_output[0]
+        rgroups = read_output[1]
+        varattachs = read_output[2]
+
+        # Deal with R groups and relabel 
         for rgroup in rgroups:
             rgroup.add_xe()
             rgroup.generate_component_inchis()
@@ -26,12 +35,20 @@ class MarkMol3000(object):
         rgroups, rgroup_mapping = self.sort_rgroups(rgroups)
 
         core = self.relabel_pseudoatoms(core, rgroup_mapping)
-
+        
         for rgroup in rgroups:
             rgroup.generate_links(core)
 
+        # Deal with Variable attachments
+        for varattach in varattachs:
+            varattach.set_endpts()
+            varattach.set_atom_indices()
+            core = varattach.split(core)
+            
+
         core, pseudoatom_indices = self.pseudoatoms_to_xe(core)
         core_inchi, core_aux = Chem.MolToInchiAndAuxInfo(core)
+        #print(core_inchi)
         #ShowMol(core)
 
         mapping = get_canonical_map(core_aux)
@@ -51,13 +68,21 @@ class MarkMol3000(object):
         core_inchi = core_inchi.replace("Xe", "Zz")
 
         rgroups = sorted(rgroups, key=lambda item: item.get_index())
-
+        
         final_inchi = ""
         final_inchi += core_inchi
         
-
         for rgroup in rgroups:
             final_inchi += rgroup.get_final_inchi()
+        
+        for varattach in varattachs:
+            varattach.generate_struct_inchi()
+            varattach.set_ranker(mapping)
+
+        varattachs = sorted(varattachs, key=lambda item: item.get_ranker())
+        
+        for varattach in varattachs:
+            final_inchi += varattach.get_final_inchi(mapping)
 
         if final_inchi.find("<M>") != -1:
             # Check it's not just a normal InChI
@@ -108,6 +133,7 @@ class MarkMol3000(object):
 
         core_ctab = ""
         rgroups = []
+        varattchs = []
 
         for line in molfile_lines:
 
@@ -120,6 +146,9 @@ class MarkMol3000(object):
                 if line.find("END CTAB") != -1:
                     writing_core = 2
 
+                if line.find("ENDPTS") != -1:
+                    varattach = VarAttach(line)
+                    varattchs.append(varattach)
                 core_ctab += line
 
             #Get the CTABS for each component of each R group
@@ -182,8 +211,7 @@ class MarkMol3000(object):
 
         core_molblock = ctab_to_molblock(core_ctab)
         core_mol = Chem.MolFromMolBlock(core_molblock)
-        
-        return core_mol, rgroups
+        return core_mol, rgroups, varattchs
     
     def pseudoatoms_to_xe(self, mol):
         """
@@ -435,6 +463,133 @@ class RGroup():
         return self.index
         
 
+class VarAttach():
+
+    def __init__(self, line):
+        self.line = line
+        self.endpts = []
+        self.atom_indices = []
+        self.struct = None #Mol for the variable attachment
+        self.struct_inchi = ""
+
+    def set_endpts(self):
+        #Gets the indices of the atoms on the core structure this variable
+        #attachment can attach to and stores them in self.endpts
+        endpts = []
+        line = self.line.split("ENDPTS")[1]
+        line = line.split("(")[1]
+        line = line.split(")")[0]
+        endpt_strings = line.split()
+        endpt_strings = endpt_strings[1:]
+        for endpt_string in endpt_strings:
+            endpts.append(int(endpt_string))
+        self.endpts = sorted(endpts)
+
+    def set_atom_indices(self):
+        #Gets the indices of the placeholder atom for this variable attahcment
+        #and the atom on the variable attachment it is connected to. It is 
+        #not clear at this point which index is which - we work that out later
+        line_parts = self.line.split()
+        atom1_idx = int(line_parts[4])
+        atom2_idx = int(line_parts[5])
+        self.atom_indices = [atom1_idx, atom2_idx]
+
+    def split(self, core):
+        #Splits the molecule core into the core of the molecule and the 
+        #variable attachment. Returns the stripped core and stores the 
+        #attachment as a Mol in self.attachment
+
+
+        frag_indices = []
+        frags = Chem.GetMolFrags(
+            core, asMols=True, fragsMolAtomMapping = frag_indices
+            )
+        frags = list(zip(frags, frag_indices))
+        for frag in frags:
+            #Work out which fragment is the attachment by checking to see
+            #whether it contains one of the indices stored in self.atom_indices
+            is_attachment = False
+            for atom_idx in self.atom_indices:
+                if atom_idx - 1 in frag[1]:
+                    is_attachment = True
+            
+            #If it is the attachment, remove the placeholder atom and add a
+            #xenon atom placeholder instead - this will be turned into a Zz
+            #later. 
+            #This is maybe not the most elegant way of doing this but other 
+            #methods seem to cause issues as it seems like RDKit is still 
+            #trying to store variable attachment data for the molecule which
+            #causes issues if we try to use ReplaceAtom() instead of doing it
+            #manually. I'm not sure why that is but this method seems to work.
+            if is_attachment:
+                attachment = frag[0]
+                for i, atom in enumerate(attachment.GetAtoms()):
+                    if atom.GetAtomicNum() == 0:
+                        neighbor_indices = []
+                        for neighbor in atom.GetNeighbors():
+                            neighbor_indices.append(neighbor.GetIdx())
+                        
+                        edit_mol = EditableMol(attachment)
+                        xe_atom = Atom(54)
+                        xe_idx = edit_mol.AddAtom(xe_atom)
+                        for neighbor_idx in neighbor_indices:
+                            edit_mol.AddBond(
+                                neighbor_idx,
+                                xe_idx, 
+                                order=Chem.rdchem.BondType.SINGLE
+                                )
+                        edit_mol.RemoveAtom(i)
+                        attachment = edit_mol.GetMol()
+                        
+                
+
+            else:
+                core = frag[0]
+         
+        self.struct = attachment
+        return core
+        
+    def generate_struct_inchi(self):
+        #Gets the InChI for the variable attachment structure
+        atoms = self.struct.GetAtoms()
+        if len(atoms) == 2:
+            for atom in atoms:
+                if atom.GetAtomicNum() != 54:
+                    self.struct_inchi = atom.GetSymbol()
+        else:
+            self.struct_inchi = Chem.MolToInchi(self.struct)
+        self.struct_inchi = self.struct_inchi.replace("InChI=1S/", "")
+        self.struct_inchi = self.struct_inchi.replace("Xe", "Zz")
+        
+    def get_final_inchi(self, mapping):
+        #Constructs the full MarkInChI label including the connections
+        final_inchi = "<M>"
+        canonical_endpts = []
+        for endpt in self.endpts:
+            canoncical_endpt = mapping[endpt]
+            canonical_endpts.append(canoncical_endpt)
+
+        canonical_endpts = sorted(canonical_endpts)
+        for endpt in canonical_endpts:
+            final_inchi += "%iH," % endpt
+        final_inchi = final_inchi[:len(final_inchi)-1]
+        final_inchi += "-"
+        final_inchi += self.struct_inchi
+        return final_inchi
+
+    def set_ranker(self, mapping):
+        #Used for determining order of variable attachments in the final
+        #MarkInChI string
+        sum = 0
+        for endpt in self.endpts:
+            sum += mapping[endpt]
+        ranker = str(sum)
+        ranker += self.struct_inchi
+        self.ranker = ranker
+
+    def get_ranker(self):
+        return self.ranker
+
 def ctab_to_molblock(ctab):
         #Adds necessary beginning and end to a CTAB to allow RDKit to read it
         #as a molblock
@@ -458,32 +613,39 @@ def get_canonical_map(auxinfo):
         canonical_map[original_label] = new_label
     return canonical_map
 
-def ShowMols(mols, subImgSize=(200, 200), title='RDKit Molecule',
+def Show(mols, subImgSize=(200, 200), title='RDKit Molecule',
             stayInFront=True, **kwargs):
   """
-  Generates a picture of molecules and displays it in a Tkinter window.
+  Generates a picture of molecule(s) and displays it in a Tkinter window.
+  Only if in debug mode, otherwise does nothing. 
 
   This function is a copy of the ShowMol function from the RDKit source code
   that displays multiple Mols in the same Tkinter window.
 
   It is only used for debugging purposes.
   """
-  import tkinter
+  if DEBUG:
+    import tkinter
 
-  from PIL import ImageTk
+    from PIL import ImageTk
 
-  img = MolsToImage(mols, subImgSize, **kwargs)
+    if type(mols) is list:
+        
+        img = MolsToImage(mols, subImgSize, **kwargs)
 
-  tkRoot = tkinter.Tk()
-  tkRoot.title(title)
-  tkPI = ImageTk.PhotoImage(img)
-  tkLabel = tkinter.Label(tkRoot, image=tkPI)
-  tkLabel.place(x=0, y=0, width=img.size[0], height=img.size[1])
-  tkRoot.geometry('%dx%d' % (img.size))
-  tkRoot.lift()
-  if stayInFront:
-    tkRoot.attributes('-topmost', True)
-  tkRoot.mainloop()
+        tkRoot = tkinter.Tk()
+        tkRoot.title(title)
+        tkPI = ImageTk.PhotoImage(img)
+        tkLabel = tkinter.Label(tkRoot, image=tkPI)
+        tkLabel.place(x=0, y=0, width=img.size[0], height=img.size[1])
+        tkRoot.geometry('%dx%d' % (img.size))
+        tkRoot.lift()
+        if stayInFront:
+            tkRoot.attributes('-topmost', True)
+        tkRoot.mainloop()
+    else:
+        ShowMol(mols)
+    
 
 if __name__ == "__main__":
     #If file run independently

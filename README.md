@@ -7,6 +7,7 @@ A tool to generate MarkInChi codes from v3000 .mol files.
 - R groups with multiple connections where connection points are different will generate a somewhat meaningful MarkInChI string however the connectivity is not well defined 
 - Isotopically labelled compounds are supported
 - MarkInChI string does not depend on initial R group labelling which should resolve issues with stereochemistry in the old MarkInChI software
+- Variable attachments where the attachment is either a single atom or structure (R groups not yet supported). Note that these attachments are not yet canonicalised in terms of identical connection points and so the generated InChI does depend on how the MolFile is defined
 
 ## Limitations
 - Compounds with more than 201 R groups
