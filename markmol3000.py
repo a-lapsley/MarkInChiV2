@@ -2,14 +2,15 @@ from rdkit import Chem
 from rdkit.Chem.rdchem import EditableMol
 from rdkit.Chem.rdchem import Atom
 from rdkit.Chem.Draw import ShowMol, MolsToImage #only for debugging
+from copy import deepcopy
 import os
 
-FILENAME = "molfiles\\ext10.1.mol"
+FILENAME = "molfiles\\test6a.mol"
 DEBUG = True
 
 class MarkMol3000(object):
 
-    def __init__(self) -> None:
+    def __init__(self):
         self.molfile_lines = [] #Lines of v3000 .mol file that will be converted
 
     def generate_markinchi(self):
@@ -17,7 +18,7 @@ class MarkMol3000(object):
 
         #Parse the molfile to generate:
         #core - Mol for the core of the molecule
-        #rgroups - list of RGroup objects
+        #rgroups - dictionary of RGroup objects, key = R Group number
         #varattachs - list of VarAttach objects
         read_output = self.read_molfile_lines(self.molfile_lines)
 
@@ -25,56 +26,17 @@ class MarkMol3000(object):
         rgroups = read_output[1]
         varattachs = read_output[2]
 
-        # Deal with R groups and relabel 
-        for rgroup in rgroups:
-            rgroup.add_xe()
-            rgroup.generate_component_inchis()
-            rgroup.sort_components()
-            rgroup.generate_inchi()
+        markinchi = MarkInChI(
+            core, rgroups=rgroups, varattachs=varattachs, final=True
+            )
 
-        rgroups, rgroup_mapping = self.sort_rgroups(rgroups)
+        return markinchi.get_markinchi()
 
-        core = self.relabel_pseudoatoms(core, rgroup_mapping)
-        
-        for rgroup in rgroups:
-            rgroup.generate_links(core)
-
-        # Deal with Variable attachments
         for varattach in varattachs:
             varattach.set_endpts()
             varattach.set_atom_indices()
             core = varattach.split(core)
-            
 
-        core, pseudoatom_indices = self.pseudoatoms_to_xe(core)
-        core_inchi, core_aux = Chem.MolToInchiAndAuxInfo(core)
-        #print(core_inchi)
-        #ShowMol(core)
-
-        mapping = get_canonical_map(core_aux)
-    
-        core, rgroup_indices = self.set_atom_mapping(core, mapping)
-
-        for rgroup in rgroups:
-            rgroup.remap_attachments(mapping)
-            rgroup.set_index_from_map(rgroup_indices)
-
-        new_pseudoatom_indices = self.canonical_pseudoatom_indices(
-            pseudoatom_indices, mapping
-            )
-        core_inchi = self.remove_pseudoatom_isotopes(
-            core_inchi, new_pseudoatom_indices
-            )
-        core_inchi = core_inchi.replace("Xe", "Zz")
-
-        rgroups = sorted(rgroups, key=lambda item: item.get_index())
-        
-        final_inchi = ""
-        final_inchi += core_inchi
-        
-        for rgroup in rgroups:
-            final_inchi += rgroup.get_final_inchi()
-        
         for varattach in varattachs:
             varattach.generate_struct_inchi()
             varattach.set_ranker(mapping)
@@ -83,14 +45,6 @@ class MarkMol3000(object):
         
         for varattach in varattachs:
             final_inchi += varattach.get_final_inchi(mapping)
-
-        if final_inchi.find("<M>") != -1:
-            # Check it's not just a normal InChI
-            final_inchi = final_inchi.replace("InChI=1S", "MarkInChI=1B")
-
-        return final_inchi
-        
-        #ShowMols([core, relabelled_core])
 
     def load_from_file(self, file_path):
         # Loads V3000 molfile with path 'file_path'
@@ -132,7 +86,7 @@ class MarkMol3000(object):
         writing_rgroups = False
 
         core_ctab = ""
-        rgroups = []
+        rgroups = {}
         varattchs = []
 
         for line in molfile_lines:
@@ -160,7 +114,7 @@ class MarkMol3000(object):
                 rgroup_ctab = ""
 
             if line.find("END RGROUP") != -1:
-                rgroups.append(rgroup)
+                rgroups[rgroup_number] = rgroup
 
             if writing_rgroups:
 
@@ -212,60 +166,232 @@ class MarkMol3000(object):
         core_molblock = ctab_to_molblock(core_ctab)
         core_mol = Chem.MolFromMolBlock(core_molblock)
         return core_mol, rgroups, varattchs
+
+
     
-    def pseudoatoms_to_xe(self, mol):
+
+
+class MarkInChI():
+    def __init__(
+            self, mol, rgroups={}, varattachs=[], final=False, 
+            parent_linker_indices = []
+            ):
+        self.mol = mol
+        self.rgroups = deepcopy(rgroups)
+        #Use a deepcopy to stop any changes to the ordering of R groups within
+        #this fragment affecting its parent
+        self.varattachs = varattachs
+        self.final = final
+        self.parent_linker_indices = parent_linker_indices
+
+    def get_markinchi(self):
+        
+        child_rgroups = self.get_child_rgroups(self.mol)
+
+        # Generate MarkInChIs for each child R group, sort them, and relabel
+        # the pseudoatoms in this molecule accordingly
+
+        if len(child_rgroups) != 0:
+            for rlabel in child_rgroups:
+                rgroup = self.rgroups[rlabel]
+                rgroup.add_xe()
+                rgroup.generate_component_inchis(self.rgroups)
+                rgroup.sort_components()
+                rgroup.generate_inchi()
+            
+
+            self.rgroups, rgroup_mapping = self.sort_rgroups(self.rgroups)
+
+            self.mol = self.relabel_pseudoatoms(
+                self.mol, rgroup_mapping
+            )
+
+            
+        # Convert pseudoatoms to Xe and isotopically label according to R label
+        # rlabel_map is a dictionary that gives the R group label of the 
+        # pseudoatom at a given index
+        self.mol, rlabel_map = self.rgroup_pseudoatoms_to_xe(self.mol)
+
+        # Canonicalise the atom indices of self.mol by converting to InChI and 
+        # back again
+        core_inchi, aux = Chem.MolToInchiAndAuxInfo(self.mol)
+        self.mol = Chem.MolFromInchi(core_inchi)
+
+        # Re-map any lists of indices to the new canonical labels
+        mapping = self.get_canonical_map(aux)
+
+        rlabel_map = self.remap_rlabel_map(rlabel_map, mapping)
+
+        self.parent_linker_indices = self.remap(
+            self.parent_linker_indices, mapping
+        )
+
+
+        # --- Formatting the final string correctly ---
+        core_inchi = core_inchi.replace("Xe", "Zz")
+
+        # Obtain the InChI string before the isotope layer, the isotope layer 
+        # itself, and any additional layers after the isotope layer
+        parts = core_inchi.split("/i")
+        final_inchi = parts[0]
+        markush_strings = ""
+
+        if len(parts) == 2:
+            sub_parts = parts[1].split("/")
+            isotope_layer = sub_parts[0]
+            if len(sub_parts) == 2:
+                additional_layers = sub_parts[1]
+            else:
+                additional_layers = ""
+        else:
+            isotope_layer = ""
+            additional_layers = ""
+
+        # Iterate through the pseudoatoms in the Mol and add the appropriate 
+        # Markush information.
+        # As the atom indices are their canonical indices, these parts will be
+        # added in the correct order
+
+        xe_atom_count = 0
+        for atom in self.mol.GetAtoms():
+            if atom.GetAtomicNum() == 54:
+                isotope = atom.GetIsotope()
+                idx = atom.GetIdx() + 1
+                if isotope == 31:
+                    markush_strings += "<M></M>"
+                    replace_string = "%i-100" % idx
+                else:
+                    rlabel = isotope - 31
+                    markush_strings += self.rgroups[rlabel].get_final_inchi()
+                    replace_string = str(idx)
+                    if isotope < 131:
+                        replace_string += str(isotope-131)
+                    elif isotope > 131:
+                        replace_string += "+"
+                        replace_string += str(isotope-131)
+                # This seemed like the simplest way to cover the cases that the 
+                # isotope is in the middle of the list or at the end 
+                isotope_layer = isotope_layer.replace(replace_string + ",", "")
+                isotope_layer = isotope_layer.replace(replace_string, "")
+
+                xe_atom_count += 1
+
+        # If there is still relevant isotopic information left, format it
+        if isotope_layer != "":
+            if isotope_layer.strip()[len(isotope_layer)-1] == ",":
+                isotope_layer = isotope_layer[:len(isotope_layer)-1]
+            isotope_layer = "/i" + isotope_layer
+
+        # Add the isotope, additional, and Markush layers to the final string
+        final_inchi = final_inchi + isotope_layer
+        if additional_layers != "":
+            final_inchi += "/"
+            final_inchi += additional_layers
+        final_inchi += markush_strings
+
+        # MarkInChI strings that are sub parts of a greater MarkInChI should be
+        # formatted differently - no InChI prefix, single atoms are just the 
+        # symbol
+        if not self.final:
+            final_inchi = final_inchi.replace("InChI=1S/", "")
+            if xe_atom_count == 0 and len(self.mol.GetAtoms()) == 1:
+                atom = self.mol.GetAtomWithIdx(0)
+                #This tidies up the isotope information for single atoms
+                if isotope_layer != "":
+                    isotope_layer = isotope_layer.replace("/i1","")
+                    isotope_layer = isotope_layer.replace("/", "")
+                final_inchi = atom.GetSymbol() + isotope_layer
+
+        # If final string has Markush information, label it as a MarkInChI 
+        if final_inchi.find("<M>") != 0:
+            final_inchi = final_inchi.replace("InChI=1S/", "MarkInChI=1B/")
+
+        #Show(self.mol, indices=True)
+        return final_inchi
+
+
+    def sort_rgroups(self, rgroups):
+        rgroup_mapping = {}
+        rgroups = dict(sorted(
+            rgroups.items(), key=lambda item: item[1].get_inchi()
+            ))
+        for i in rgroups.keys():
+            
+            rgroup = rgroups[i]
+            old_id = rgroup.get_id()
+            new_id = i
+            rgroup_mapping[old_id] = new_id
+            rgroup.set_id(new_id)
+        return rgroups, rgroup_mapping
+            
+    def get_child_rgroups(self, mol):
+        #Gets a list of the R group labels that are immediately referenced
+        #by this structure
+        
+        child_rgroups = []
+        for atom in mol.GetAtoms():
+            if atom.HasProp("_MolFileRLabel"):
+                rlabel = atom.GetIntProp("_MolFileRLabel")
+                if rlabel not in child_rgroups:
+                    child_rgroups.append(rlabel)
+
+        return child_rgroups
+            
+    def relabel_pseudoatoms(self, mol, rgroup_mapping):
+        for atom in mol.GetAtoms():
+            if atom.HasProp("_MolFileRLabel"):
+                old_label = atom.GetIntProp("_MolFileRLabel")
+                new_label = rgroup_mapping[old_label]
+                atom.SetIntProp("_MolFileRLabel", new_label)
+        return mol
+    
+    def rgroup_pseudoatoms_to_xe(self, mol):
         """
         Changes the Rn pseudoatoms in mol to Xe atoms
 
         Isotopically labels the Xe atoms according to the R group number
-        For Rn, Z = 232 - n
+        For Rn, Z = 31 + n
 
         Xe standard isotope weight: 131
         InChI supports isotopes from -100 to +100 relative to the 
         standard isotope weight, ie. 31 to 231
-        We want R1 to have the highest priority, so highest isotopic 
-        weight, ie. 231, all the way down to a possible R201 with an 
-        isotopic weight of 31
 
-        Also generate a list of the indices of these atoms.
+        Xe-31 we reserve for representing links back to parent fragments.
+
+        Also generate a map (atom_idx: rlabel).
         """
-        pseudoatom_indices = []
+        index_to_rlabel_map = {}
+
         for atom in mol.GetAtoms():
             if atom.HasProp("_MolFileRLabel"):
                 rlabel = atom.GetIntProp("_MolFileRLabel")
                 atom.SetAtomicNum(54) #Change atom to Xe
-                atom.SetIsotope(232-rlabel)
+                atom.SetIsotope(31+rlabel)
                 idx = atom.GetIdx()
-                pseudoatom_indices.append(idx + 1)
-        return mol, pseudoatom_indices
+                index_to_rlabel_map[idx+1] = rlabel
+        return mol, index_to_rlabel_map
+
+    def get_canonical_map(self, auxinfo):
+        #Generates a map between the original atom indices and the canonical
+        #indices found by the InChI algorithm
+        #These are extracted from the aux info generated by the InChI algorithm
+        #Stored in a dictionary with entries original_label:new_label
+        if auxinfo == None:
+            return {1: 1}
         
-    def set_atom_mapping(self, mol, mapping):
-        # Sets the atom map number for each atom in mol to the corresponding
-        # canonical index according to mapping
-        # This allows finding atoms based on their canonical InChI index
-        # Also generates a map between the number of an R group and its index
-        # (rlabel, index)
-        rgroup_indices = {}
-        for atom in mol.GetAtoms():
-            original_idx = atom.GetIdx() + 1
-            canonical_idx = mapping[original_idx]
-            atom.SetAtomMapNum(canonical_idx)
-            if atom.HasProp("_MolFileRLabel"):
-                rlabel = atom.GetIntProp("_MolFileRLabel")
-                rgroup_indices[rlabel] = canonical_idx
+        mapping_string = auxinfo.split("/")[2]
+        mapping_string = mapping_string[2:]
+        original_labels = mapping_string.split(",")
+        canonical_map = {}
+        for i, original_label in enumerate(original_labels):
+            new_label = i + 1
+            original_label = int(original_label)
+            canonical_map[original_label] = new_label
+        return canonical_map
+    
+    def remove_pseudoatom_isotopes(self, inchi, rgroup_indices):
 
-        return mol, rgroup_indices
-
-    def canonical_pseudoatom_indices(self, pseudoatom_indices, mapping):
-        # Returns list of the canonical indices for the pseudoatoms
-        new_indices = []
-        for idx in pseudoatom_indices:
-            new_indices.append(mapping[idx])
-        return new_indices
-
-    def remove_pseudoatom_isotopes(self, inchi, indices):
         # Removes isotope labels for the pseudoatoms from inchi
-        # indices gives the canonical index of the pseudoatoms
 
         inchi_parts = inchi.split("/")
         new_inchi = ""
@@ -279,12 +405,12 @@ class MarkMol3000(object):
                 for fragment in fragments:
                     if fragment.find("+") != -1:
                         idx = fragment.split("+")[0]
-                        if int(idx) not in indices:
+                        if int(idx) not in rgroup_indices:
                             isotope_layer += fragment
                             isotope_layer += ","
                     else:
                         idx = fragment.split("-")[0]
-                        if int(idx) not in indices:
+                        if int(idx) not in rgroup_indices:
                             isotope_layer += fragment
                             isotope_layer += ","
                 if isotope_layer != "i":
@@ -294,25 +420,21 @@ class MarkMol3000(object):
         new_inchi = new_inchi[:len(new_inchi) - 1]
         return new_inchi
 
-    def sort_rgroups(self, rgroups):
-        rgroup_mapping = {}
-        rgroups = sorted(rgroups, key=lambda item: item.get_inchi())
-        for i, rgroup in enumerate(rgroups):
-            old_id = rgroup.get_id()
-            new_id = i + 1
-            rgroup_mapping[old_id] = new_id
-            rgroup.set_id(new_id)
-        return rgroups, rgroup_mapping
-
-    def relabel_pseudoatoms(self, mol, mapping):
-        for atom in mol.GetAtoms():
-            if atom.HasProp("_MolFileRLabel"):
-                old_label = atom.GetIntProp("_MolFileRLabel")
-                new_label = mapping[old_label]
-                atom.SetIntProp("_MolFileRLabel", new_label)
-        return mol
+    def remap(self, index_array, mapping):
+        #Simple function to remap indices in a list according to a mapping
+        new_index_array = []
+        for old_idx in index_array:
+            new_idx = mapping[old_idx]
+            new_index_array.append(new_idx)
+        return new_index_array
     
-
+    def remap_rlabel_map(self, rlabel_map, mapping):
+        new_rlabel_map = {}
+        for old_idx in rlabel_map.keys():
+            new_idx = mapping[old_idx]
+            new_rlabel_map[new_idx] = rlabel_map[old_idx]
+        return new_rlabel_map
+    
 class RGroup():
 
     def __init__(self, id) -> None:
@@ -320,6 +442,7 @@ class RGroup():
         self.components = []
         self.inchi = ""
         self.index = None
+        self.child_rgroups = []
      
     def get_id(self):
         return self.id
@@ -334,10 +457,16 @@ class RGroup():
         component = {}
         component["mol"] = mol
         component["attachments"] = attachments
+        component["linker_indices"] = []
         self.components.append(component)
         return None
     
     def add_xe(self):
+        # For each component, 
+        # adds pseudoatoms to the Mol structure to represent the linkage points
+        # back to the parent structure
+        # Also sets list of indices for these atoms. 
+        parent_linker_indices = []
         for component in self.components:
             mol = component["mol"]
             attachments = component["attachments"]
@@ -352,6 +481,7 @@ class RGroup():
                         if attachment[1] == n:
                             edit_mol = EditableMol(mol)
                             xe_atom = Atom(54)
+                            xe_atom.SetIsotope(31)
                             xe_idx = edit_mol.AddAtom(xe_atom)
                             edit_mol.AddBond(
                                 atom_idx,
@@ -359,25 +489,19 @@ class RGroup():
                                 order=Chem.rdchem.BondType.SINGLE
                                 )
                             mol = edit_mol.GetMol()
+                            parent_linker_indices.append(xe_idx + 1)
+                component["linker_indices"] = parent_linker_indices
                 component["mol"] = mol
                 
-    def generate_component_inchis(self):
+    def generate_component_inchis(self, rgroups):
+
         for component in self.components:
             mol = component["mol"]
-            if len(mol.GetAtoms()) == 1:
-                atom = mol.GetAtomWithIdx(0)
-                inchi = atom.GetSymbol()
-                component["inchi"] = inchi
-                component["mapping"] = None
-            else:
-                inchi, aux = Chem.MolToInchiAndAuxInfo(mol)
-                inchi = inchi.replace("InChI=1S/","")
-                inchi = inchi.replace("Xe", "Zz")
-                component["inchi"] = inchi
-                mapping = get_canonical_map(aux)
-                component["mapping"] = mapping
-                #print(inchi)
-                #print(mapping)
+            linker_indices = component["linker_indices"]
+            markinchi = MarkInChI(
+                mol, rgroups=rgroups, parent_linker_indices=linker_indices)
+            inchi = markinchi.get_markinchi()
+            component["inchi"] = inchi
 
     def sort_components(self):
         sorted_list = sorted(self.components, key=lambda item: item["inchi"])
@@ -389,6 +513,7 @@ class RGroup():
             inchi += component["inchi"]
             inchi += "!"
         inchi = inchi[:len(inchi)-1]
+        inchi += "</M>"
         self.inchi = inchi
         return inchi
 
@@ -590,6 +715,8 @@ class VarAttach():
     def get_ranker(self):
         return self.ranker
 
+
+
 def ctab_to_molblock(ctab):
         #Adds necessary beginning and end to a CTAB to allow RDKit to read it
         #as a molblock
@@ -598,23 +725,12 @@ def ctab_to_molblock(ctab):
         molblock += "M  END"
         return molblock
 
-def get_canonical_map(auxinfo):
-    #Generates a map between the original atom indices and the canonical
-    #indices found by the InChI algorithm
-    #These are extracted from the aux info generated by the InChI algorithm
-    #Stored in a dictionary with entries original_label:new_label
-    mapping_string = auxinfo.split("/")[2]
-    mapping_string = mapping_string[2:]
-    original_labels = mapping_string.split(",")
-    canonical_map = {}
-    for i, original_label in enumerate(original_labels):
-        new_label = i + 1
-        original_label = int(original_label)
-        canonical_map[original_label] = new_label
-    return canonical_map
+
+
+
 
 def Show(mols, subImgSize=(200, 200), title='RDKit Molecule',
-            stayInFront=True, **kwargs):
+            stayInFront=True, indices=False, **kwargs):
   """
   Generates a picture of molecule(s) and displays it in a Tkinter window.
   Only if in debug mode, otherwise does nothing. 
@@ -625,6 +741,7 @@ def Show(mols, subImgSize=(200, 200), title='RDKit Molecule',
   It is only used for debugging purposes.
   """
   if DEBUG:
+    mols = deepcopy(mols)
     import tkinter
 
     from PIL import ImageTk
@@ -644,6 +761,9 @@ def Show(mols, subImgSize=(200, 200), title='RDKit Molecule',
             tkRoot.attributes('-topmost', True)
         tkRoot.mainloop()
     else:
+        if indices:
+            for atom in mols.GetAtoms():
+                atom.SetProp("molAtomMapNumber", str(atom.GetIdx() + 1))
         ShowMol(mols)
     
 
