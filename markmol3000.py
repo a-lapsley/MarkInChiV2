@@ -4,9 +4,10 @@ from rdkit.Chem.rdchem import Atom
 from rdkit.Chem.Draw import ShowMol, MolsToImage #only for debugging
 from copy import deepcopy
 import os
+import sys, getopt
 
-FILENAME = "molfiles\\test6a.mol"
-DEBUG = True
+#Default settings
+debug = False
 
 class MarkMol3000(object):
 
@@ -306,7 +307,7 @@ class MarkInChI():
         if final_inchi.find("<M>") != 0:
             final_inchi = final_inchi.replace("InChI=1S/", "MarkInChI=1B/")
 
-        #Show(self.mol, indices=True)
+        Show(self.mol, indices=True)
         return final_inchi
 
 
@@ -740,7 +741,7 @@ def Show(mols, subImgSize=(200, 200), title='RDKit Molecule',
 
   It is only used for debugging purposes.
   """
-  if DEBUG:
+  if debug:
     mols = deepcopy(mols)
     import tkinter
 
@@ -768,12 +769,20 @@ def Show(mols, subImgSize=(200, 200), title='RDKit Molecule',
     
 
 if __name__ == "__main__":
-    #If file run independently
-    
-    filedir = os.path.join(os.getcwd(), FILENAME)
+
+        
+    argv = sys.argv[1:]
+    opts, args = getopt.getopt(argv, "i:d")
+    for opt, arg in opts:
+        if opt == "-d":
+            debug = True
+        elif opt == "-i":
+            filename = arg
+
+    filedir = os.path.join(os.getcwd(), filename)
     markinchi = MarkMol3000()
     markinchi.load_from_file(filedir)
-    inchi = markinchi.generate_markinchi()
-    print(inchi)
+    markinchi_string = markinchi.generate_markinchi()
+    print(markinchi_string)
 
     
