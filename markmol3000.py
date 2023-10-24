@@ -213,6 +213,8 @@ class MarkInChI():
         
         varattachs = self.sort_varattachs(varattachs)
 
+        
+
         final_inchi = self.finalise_markinchi(core_inchi, varattachs)
 
         
@@ -332,6 +334,15 @@ class MarkInChI():
 
         core_inchi = inchi.replace("Xe", "Zz")
 
+        # If the fragment is just a single R group, we don't need the core bit
+        # (But only if it's not final, otherwise it's not a proper MarkInChI)
+        mol_is_rgroup = False
+        if len(self.mol.GetAtoms()) == 1 and not self.final:
+            if self.mol.GetAtomWithIdx(0).GetAtomicNum() == 54:
+                core_inchi = ""
+                mol_is_rgroup = True
+
+
         # Obtain the InChI string before the isotope layer, the isotope layer 
         # itself, and any additional layers after the isotope layer
         parts = core_inchi.split("/i")
@@ -364,7 +375,13 @@ class MarkInChI():
                     replace_string = "%i-100" % idx
                 else:
                     rlabel = isotope - 31
-                    markush_strings += self.rgroups[rlabel].get_final_inchi()
+                    string = self.rgroups[rlabel].get_final_inchi()
+                    #If the mol is just an R group, strip the <M> markers as 
+                    #they are not needed
+                    if mol_is_rgroup:
+                        string = string[3:]
+                        string = string[:len(string)-4]
+                    markush_strings += string
                     replace_string = str(idx)
                     if isotope < 131:
                         replace_string += str(isotope-131)
@@ -711,12 +728,24 @@ class VarAttach():
                         new_string += str(new_endpt) + " "
                     new_string = new_string[:len(new_string)-1] + ")"
                     bond.SetProp("_MolFileBondEndPts", new_string)
+        
+        #If variable attachment is just an R group, treat it differently
+        atoms = self.mol.GetAtoms()
+        if len(atoms) == 2:
+            for atom in atoms:
+                if atom.HasProp("_MolFileRLabel"):
+                    new_mol = Chem.Mol()
+                    new_mol = EditableMol(new_mol)
+                    new_mol.AddAtom(atom)
+                    new_mol = new_mol.GetMol()
+                    self.mol = new_mol
 
     def add_nested_attachment(self, attachment):
         self.mol = Chem.CombineMols(self.mol, attachment.get_mol())
         
     def generate_inchi(self, rgroups):
 
+        
         markinchi = MarkInChI(
             self.mol, rgroups
         )
@@ -821,7 +850,7 @@ if __name__ == "__main__":
             filename = arg
     
     if len(argv) == 0:
-        filename = "molfiles\\structures_for_testing\\ext9.mol"
+        filename = "molfiles\\structures_for_testing\\ext22.2.mol"
         debug = True
 
     filedir = os.path.join(os.getcwd(), filename)
