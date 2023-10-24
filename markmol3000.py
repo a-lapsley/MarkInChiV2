@@ -151,11 +151,8 @@ class MarkMol3000(object):
         core_mol = Chem.MolFromMolBlock(core_molblock)
         return core_mol, rgroups
 
-
-    
-
-
 class MarkInChI():
+
     def __init__(
             self, mol, rgroups={}, final=False
             ):
@@ -165,15 +162,13 @@ class MarkInChI():
         #this fragment affecting its parent
         self.final = final
 
-
     def get_markinchi(self):
         
-        Show(self.mol)
+        
         self.mol, varattachs = self.get_varattachs(self.mol)
         
+        listatoms = self.get_listatoms()
         
-        
-
         child_rgroups = self.get_child_rgroups(self.mol)
 
         # Generate MarkInChIs for each child R group, sort them, and relabel
@@ -206,7 +201,11 @@ class MarkInChI():
         # Re-map any indices to the new canonical labels
         mapping = self.get_canonical_map(aux)
 
+        listatoms = self.remap_listatoms(listatoms, mapping)
+        listatoms = self.get_atom_symbols(listatoms)
+        print(listatoms)
 
+        # Deal with variable attachments
         for varattach in varattachs:
             varattach.generate_inchi(self.rgroups)
             varattach.remap_endpts(mapping)
@@ -215,14 +214,15 @@ class MarkInChI():
 
         
 
-        final_inchi = self.finalise_markinchi(core_inchi, varattachs)
+        final_inchi = self.finalise_markinchi(
+            core_inchi, varattachs, listatoms
+            )
 
         
 
         #print(final_inchi)
         
         return final_inchi
-
 
     def sort_rgroups(self, rgroups):
         rgroup_mapping = {}
@@ -328,7 +328,7 @@ class MarkInChI():
         new_inchi = new_inchi[:len(new_inchi) - 1]
         return new_inchi
 
-    def finalise_markinchi(self, inchi, varattachs):
+    def finalise_markinchi(self, inchi, varattachs, listatoms):
         # This function constructs the final MarkInChI, making sure everything
         # is formatted correctly etc.
 
@@ -399,6 +399,12 @@ class MarkInChI():
 
         for varattach in varattachs:
             markush_strings += varattach.get_final_inchi()
+
+        # Add Markush layer for the atom lists
+
+        for listatom in listatoms:
+            markush_strings += self.get_listatom_string(listatom)
+
 
         if xe_atom_count == 1:
             markush_strings = markush_strings.replace("<M></M>","")
@@ -528,6 +534,84 @@ class MarkInChI():
 
         return varattachs
 
+    def get_listatoms(self):
+
+        # Gets the list of atomic numbers for the index of each listatom
+
+        listatoms = []
+        for atom in self.mol.GetAtoms():
+            atom.ClearProp("molAtomMapNumber")
+            if atom.HasQuery():
+                smarts = atom.GetSmarts()
+
+                smarts = smarts.replace("[","")
+                smarts = smarts.replace("]","")
+                smarts = smarts.replace("#","")
+                smarts_parts = smarts.split(",")
+                
+                atomic_nums = []
+
+                for part in smarts_parts:
+                    atomic_nums.append(int(part))
+                
+                atomic_nums = sorted(atomic_nums)
+
+                idx = atom.GetIdx() + 1
+                listatom = {}
+                listatom["idx"] = idx
+                listatom["atomic_nums"] = atomic_nums
+                listatoms.append(listatom)
+                
+        return listatoms
+
+    def remap_listatoms(self, listatoms, mapping):
+        # Remaps the listatoms to the new indices of the molecule, and sort
+        # by this new index
+
+        new_listatoms = []
+
+        for listatom in listatoms:
+            new_listatom = {}
+            new_listatom["idx"] = mapping[listatom["idx"]]
+            new_listatom["atomic_nums"] = listatom["atomic_nums"]
+            new_listatoms.append(new_listatom)
+
+        new_listatoms = sorted(new_listatoms, key=lambda item: item["idx"])
+        
+        return new_listatoms
+    
+    def get_atom_symbols(self, listatoms):
+        
+        # Adds a list of the atomic symbols for each atom in each list, in the 
+        # correct order (C, H, then ascending atomic)
+
+        periodic_table = Chem.rdchem.GetPeriodicTable()
+
+        for listatom in sorted(listatoms):
+            atom_symbols = []
+            if 6 in listatom["atomic_nums"]:
+                atom_symbols.append("C")
+            if 1 in listatom["atomic_nums"]:
+                atom_symbols.append("H")
+            for i in listatom["atomic_nums"]:
+                if i not in (1,6):
+                    atom_symbols.append(periodic_table.GetElementSymbol(i))
+            listatom["atom_symbols"] = atom_symbols
+        
+        return listatoms
+
+    def get_listatom_string(self, listatom):
+        #Constructs the Markush string for a listatom
+
+        markush_string = "<M>%i-" % listatom["idx"]
+
+        for symbol in listatom["atom_symbols"]:
+            markush_string += "%s!" % symbol
+        markush_string = markush_string[:len(markush_string) - 1]
+        markush_string += "</M>"
+
+        return markush_string
+    
 class RGroup():
 
     def __init__(self, id):
@@ -665,7 +749,6 @@ class RGroup():
     def get_final_inchi(self):
         inchi = self.inchi
         return inchi
-
         
 class VarAttach():
 
@@ -676,8 +759,7 @@ class VarAttach():
         self.nested = False
         self.inchi = ""
         self.ranker = ""       
-
-        
+    
     def get_mol(self):
         return self.mol
     
@@ -796,10 +878,6 @@ def ctab_to_molblock(ctab):
         molblock += "M  END"
         return molblock
 
-
-
-
-
 def Show(mols, subImgSize=(200, 200), title='RDKit Molecule',
             stayInFront=True, indices=False, **kwargs):
   """
@@ -850,7 +928,7 @@ if __name__ == "__main__":
             filename = arg
     
     if len(argv) == 0:
-        filename = "molfiles\\structures_for_testing\\ext22.2.mol"
+        filename = "molfiles\\structures_for_testing\\ext5.mol"
         debug = True
 
     filedir = os.path.join(os.getcwd(), filename)
