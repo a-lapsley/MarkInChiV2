@@ -9,6 +9,7 @@ import sys, getopt
 #Default settings
 debug = False
 
+
 class MarkMol3000(object):
 
     def __init__(self):
@@ -25,27 +26,13 @@ class MarkMol3000(object):
 
         core = read_output[0]
         rgroups = read_output[1]
-        varattachs = read_output[2]
+
 
         markinchi = MarkInChI(
-            core, rgroups=rgroups, varattachs=varattachs, final=True
+            core, rgroups=rgroups, final=True
             )
 
         return markinchi.get_markinchi()
-
-        for varattach in varattachs:
-            varattach.set_endpts()
-            varattach.set_atom_indices()
-            core = varattach.split(core)
-
-        for varattach in varattachs:
-            varattach.generate_struct_inchi()
-            varattach.set_ranker(mapping)
-
-        varattachs = sorted(varattachs, key=lambda item: item.get_ranker())
-        
-        for varattach in varattachs:
-            final_inchi += varattach.get_final_inchi(mapping)
 
     def load_from_file(self, file_path):
         # Loads V3000 molfile with path 'file_path'
@@ -88,7 +75,6 @@ class MarkMol3000(object):
 
         core_ctab = ""
         rgroups = {}
-        varattchs = []
 
         for line in molfile_lines:
 
@@ -101,9 +87,6 @@ class MarkMol3000(object):
                 if line.find("END CTAB") != -1:
                     writing_core = 2
 
-                if line.find("ENDPTS") != -1:
-                    varattach = VarAttach(line)
-                    varattchs.append(varattach)
                 core_ctab += line
 
             #Get the CTABS for each component of each R group
@@ -166,7 +149,7 @@ class MarkMol3000(object):
 
         core_molblock = ctab_to_molblock(core_ctab)
         core_mol = Chem.MolFromMolBlock(core_molblock)
-        return core_mol, rgroups, varattchs
+        return core_mol, rgroups
 
 
     
@@ -174,19 +157,23 @@ class MarkMol3000(object):
 
 class MarkInChI():
     def __init__(
-            self, mol, rgroups={}, varattachs=[], final=False, 
-            parent_linker_indices = []
+            self, mol, rgroups={}, final=False
             ):
         self.mol = mol
         self.rgroups = deepcopy(rgroups)
         #Use a deepcopy to stop any changes to the ordering of R groups within
         #this fragment affecting its parent
-        self.varattachs = varattachs
         self.final = final
-        self.parent_linker_indices = parent_linker_indices
+
 
     def get_markinchi(self):
         
+        Show(self.mol)
+        self.mol, varattachs = self.get_varattachs(self.mol)
+        
+        
+        
+
         child_rgroups = self.get_child_rgroups(self.mol)
 
         # Generate MarkInChIs for each child R group, sort them, and relabel
@@ -209,105 +196,29 @@ class MarkInChI():
 
             
         # Convert pseudoatoms to Xe and isotopically label according to R label
-        # rlabel_map is a dictionary that gives the R group label of the 
-        # pseudoatom at a given index
-        self.mol, rlabel_map = self.rgroup_pseudoatoms_to_xe(self.mol)
+        self.mol = self.rgroup_pseudoatoms_to_xe(self.mol)
 
         # Canonicalise the atom indices of self.mol by converting to InChI and 
         # back again
         core_inchi, aux = Chem.MolToInchiAndAuxInfo(self.mol)
         self.mol = Chem.MolFromInchi(core_inchi)
 
-        # Re-map any lists of indices to the new canonical labels
+        # Re-map any indices to the new canonical labels
         mapping = self.get_canonical_map(aux)
 
-        rlabel_map = self.remap_rlabel_map(rlabel_map, mapping)
 
-        self.parent_linker_indices = self.remap(
-            self.parent_linker_indices, mapping
-        )
+        for varattach in varattachs:
+            varattach.generate_inchi(self.rgroups)
+            varattach.remap_endpts(mapping)
+        
+        varattachs = self.sort_varattachs(varattachs)
 
+        final_inchi = self.finalise_markinchi(core_inchi, varattachs)
 
-        # --- Formatting the final string correctly ---
-        core_inchi = core_inchi.replace("Xe", "Zz")
+        
 
-        # Obtain the InChI string before the isotope layer, the isotope layer 
-        # itself, and any additional layers after the isotope layer
-        parts = core_inchi.split("/i")
-        final_inchi = parts[0]
-        markush_strings = ""
-
-        if len(parts) == 2:
-            sub_parts = parts[1].split("/")
-            isotope_layer = sub_parts[0]
-            if len(sub_parts) == 2:
-                additional_layers = sub_parts[1]
-            else:
-                additional_layers = ""
-        else:
-            isotope_layer = ""
-            additional_layers = ""
-
-        # Iterate through the pseudoatoms in the Mol and add the appropriate 
-        # Markush information.
-        # As the atom indices are their canonical indices, these parts will be
-        # added in the correct order
-
-        xe_atom_count = 0
-        for atom in self.mol.GetAtoms():
-            if atom.GetAtomicNum() == 54:
-                isotope = atom.GetIsotope()
-                idx = atom.GetIdx() + 1
-                if isotope == 31:
-                    markush_strings += "<M></M>"
-                    replace_string = "%i-100" % idx
-                else:
-                    rlabel = isotope - 31
-                    markush_strings += self.rgroups[rlabel].get_final_inchi()
-                    replace_string = str(idx)
-                    if isotope < 131:
-                        replace_string += str(isotope-131)
-                    elif isotope > 131:
-                        replace_string += "+"
-                        replace_string += str(isotope-131)
-                # This seemed like the simplest way to cover the cases that the 
-                # isotope is in the middle of the list or at the end 
-                isotope_layer = isotope_layer.replace(replace_string + ",", "")
-                isotope_layer = isotope_layer.replace(replace_string, "")
-
-                xe_atom_count += 1
-
-        # If there is still relevant isotopic information left, format it
-        if isotope_layer != "":
-            if isotope_layer.strip()[len(isotope_layer)-1] == ",":
-                isotope_layer = isotope_layer[:len(isotope_layer)-1]
-            isotope_layer = "/i" + isotope_layer
-
-        # Add the isotope, additional, and Markush layers to the final string
-        final_inchi = final_inchi + isotope_layer
-        if additional_layers != "":
-            final_inchi += "/"
-            final_inchi += additional_layers
-        final_inchi += markush_strings
-
-        # MarkInChI strings that are sub parts of a greater MarkInChI should be
-        # formatted differently - no InChI prefix, single atoms are just the 
-        # symbol
-        if not self.final:
-            final_inchi = final_inchi.replace("InChI=1S/", "")
-            if xe_atom_count == 0 and len(self.mol.GetAtoms()) == 1:
-                atom = self.mol.GetAtomWithIdx(0)
-                #This tidies up the isotope information for single atoms
-                if isotope_layer != "":
-                    isotope_layer = isotope_layer.replace("/i1","")
-                    isotope_layer = isotope_layer.replace("/", "")
-                final_inchi = atom.GetSymbol() + isotope_layer
-
-        # If final string has Markush information, label it as a MarkInChI 
-        if final_inchi.find("<M>") != 0:
-            final_inchi = final_inchi.replace("InChI=1S/", "MarkInChI=1B/")
-
-        Show(self.mol, indices=True)
+        #print(final_inchi)
+        
         return final_inchi
 
 
@@ -358,19 +269,13 @@ class MarkInChI():
         standard isotope weight, ie. 31 to 231
 
         Xe-31 we reserve for representing links back to parent fragments.
-
-        Also generate a map (atom_idx: rlabel).
         """
-        index_to_rlabel_map = {}
-
         for atom in mol.GetAtoms():
             if atom.HasProp("_MolFileRLabel"):
                 rlabel = atom.GetIntProp("_MolFileRLabel")
                 atom.SetAtomicNum(54) #Change atom to Xe
                 atom.SetIsotope(31+rlabel)
-                idx = atom.GetIdx()
-                index_to_rlabel_map[idx+1] = rlabel
-        return mol, index_to_rlabel_map
+        return mol
 
     def get_canonical_map(self, auxinfo):
         #Generates a map between the original atom indices and the canonical
@@ -421,28 +326,197 @@ class MarkInChI():
         new_inchi = new_inchi[:len(new_inchi) - 1]
         return new_inchi
 
-    def remap(self, index_array, mapping):
-        #Simple function to remap indices in a list according to a mapping
-        new_index_array = []
-        for old_idx in index_array:
-            new_idx = mapping[old_idx]
-            new_index_array.append(new_idx)
-        return new_index_array
-    
-    def remap_rlabel_map(self, rlabel_map, mapping):
-        new_rlabel_map = {}
-        for old_idx in rlabel_map.keys():
-            new_idx = mapping[old_idx]
-            new_rlabel_map[new_idx] = rlabel_map[old_idx]
-        return new_rlabel_map
-    
+    def finalise_markinchi(self, inchi, varattachs):
+        # This function constructs the final MarkInChI, making sure everything
+        # is formatted correctly etc.
+
+        core_inchi = inchi.replace("Xe", "Zz")
+
+        # Obtain the InChI string before the isotope layer, the isotope layer 
+        # itself, and any additional layers after the isotope layer
+        parts = core_inchi.split("/i")
+        final_inchi = parts[0]
+        markush_strings = ""
+
+        if len(parts) == 2:
+            sub_parts = parts[1].split("/")
+            isotope_layer = sub_parts[0]
+            if len(sub_parts) == 2:
+                additional_layers = sub_parts[1]
+            else:
+                additional_layers = ""
+        else:
+            isotope_layer = ""
+            additional_layers = ""
+
+        # Iterate through the pseudoatoms in the Mol and add the appropriate 
+        # Markush information.
+        # As the atom indices are their canonical indices, these parts will be
+        # added in the correct order
+
+        xe_atom_count = 0
+        for atom in self.mol.GetAtoms():
+            if atom.GetAtomicNum() == 54:
+                isotope = atom.GetIsotope()
+                idx = atom.GetIdx() + 1
+                if isotope == 31:
+                    markush_strings += "<M></M>"
+                    replace_string = "%i-100" % idx
+                else:
+                    rlabel = isotope - 31
+                    markush_strings += self.rgroups[rlabel].get_final_inchi()
+                    replace_string = str(idx)
+                    if isotope < 131:
+                        replace_string += str(isotope-131)
+                    elif isotope > 131:
+                        replace_string += "+"
+                        replace_string += str(isotope-131)
+                # This seemed like the simplest way to cover the cases that the 
+                # isotope is in the middle of the list or at the end 
+                isotope_layer = isotope_layer.replace(replace_string + ",", "")
+                isotope_layer = isotope_layer.replace(replace_string, "")
+
+                xe_atom_count += 1
+        
+        # Add Markush layer for each variable attachment
+
+        for varattach in varattachs:
+            markush_strings += varattach.get_final_inchi()
+
+        if xe_atom_count == 1:
+            markush_strings = markush_strings.replace("<M></M>","")
+
+        # If there is still relevant isotopic information left, format it
+        if isotope_layer != "":
+            if isotope_layer.strip()[len(isotope_layer)-1] == ",":
+                isotope_layer = isotope_layer[:len(isotope_layer)-1]
+            isotope_layer = "/i" + isotope_layer
+
+        # Add the isotope, additional, and Markush layers to the final string
+        final_inchi = final_inchi + isotope_layer
+        if additional_layers != "":
+            final_inchi += "/"
+            final_inchi += additional_layers
+        final_inchi += markush_strings
+
+        # MarkInChI strings that are sub parts of a greater MarkInChI should be
+        # formatted differently - no InChI prefix
+        if not self.final:
+            final_inchi = final_inchi.replace("InChI=1S/", "")
+
+        # If final string has Markush information, label it as a MarkInChI 
+        if final_inchi.find("<M>") != 0:
+            final_inchi = final_inchi.replace("InChI=1S/", "MarkInChI=1B/")
+
+        return final_inchi
+
+    def get_varattachs(self, mol):
+
+        # Breaks the mol up into the core and the variable attachments
+        # Returns the core and a list of the variable attachments that directly
+        # join onto the core
+
+        # Label each atom to track its original index once the mol is split
+        for atom in mol.GetAtoms():
+            atom.SetProp("molAtomMapNumber", str(atom.GetIdx() + 1))
+
+        # Get the variable attachment information for this molecule
+        # A variable attachment bond is represented as a bond between the
+        # attachment and a placeholder atom with Z=0, and the bond has a
+        # special property '_MolFileBondEndPts' which is a list of the possible
+        # indices the attachment could be bonded to (the endpoints).
+        # We find the bonds that have this property, and for those bonds get
+        # the beginning and end atoms to find the placeholder atom, and also
+        # parse the value of the property to get the index of the endpoints.
+        # Store these in a dictionary {placeholder_idx:[endpt1, endpt2, ...], }
+        attachments = {}
+        for bond in mol.GetBonds():
+            if bond.HasProp("_MolFileBondEndPts"):
+                endpts_string = bond.GetProp("_MolFileBondEndPts")
+                endpts_string = endpts_string[1:len(endpts_string)-1]
+                endpts = endpts_string.split()
+                endpts = endpts[1:]
+                for i, endpt in enumerate(endpts):
+                    endpts[i] = int(endpt)
+
+                begin_atom = bond.GetBeginAtom()
+                end_atom = bond.GetEndAtom()
+                if begin_atom.GetAtomicNum() == 0:
+                    placeholder_idx = begin_atom.GetIdx() + 1
+                else:
+                    placeholder_idx = end_atom.GetIdx() + 1                
+                attachments[placeholder_idx] = endpts
+        
+        # Split the mol based on the fragments that are not covalently bonded to
+        # each other (the variable attachments are not considered bonded to the
+        # core in the RDKit Mol)
+        # frag_indices stores the original indices of the atoms in each fragment
+        frag_indices = []
+        frags = Chem.GetMolFrags(
+            mol, asMols=True, fragsMolAtomMapping = frag_indices
+            )
+        frags = list(zip(frags, frag_indices))
+
+        all_varattachs = []
+
+        # Work out which fragment is the core and which are variable attachments
+        # by checking to see if each fragment contains any variable attachment
+        # placeholder atoms. 
+        for frag in frags:
+
+            is_core = True
+
+            for i in frag[1]:
+                if i + 1 in attachments.keys():
+                    is_core = False
+                    varattach = VarAttach(frag[0], frag[1], attachments[i+1])
+                    all_varattachs.append(varattach)
+            
+            if is_core:
+                core = frag[0]
+        
+        # Check whether a variable attachment is nested in another variable 
+        # attachment - if it is, recombine this attachment into the Mol for its
+        # parent attachment - this will get dealt with later when the MarkInChI
+        # for the parent attachment is generated. 
+        for a in all_varattachs:
+            endpts = a.get_endpts()
+
+            for b in all_varattachs:
+                indices = b.get_original_indices()
+
+                if all(endpt in indices for endpt in endpts):
+                    a.set_nested()
+                    b.add_nested_attachment(a)
+
+        # Make a list of the variable attachments that link directly to the core
+        non_nested_varattachs = []
+        for v in all_varattachs:
+            if not v.is_nested():
+                v.reform_structure()
+                non_nested_varattachs.append(v)
+        
+
+        return core, non_nested_varattachs
+
+    def sort_varattachs(self, varattachs):
+
+        # Sort the variable attachments. They are sorted first by the sum of the
+        # indices of the endpoints, and then alphabetically
+        # (in the code we sort alphabetically first to break ties, then the
+        # endpoint sum takes precedence)
+
+        varattachs = sorted(varattachs, key=lambda v: v.get_inchi())
+        varattachs = sorted(varattachs, key=lambda v: v.get_endpt_sum())
+
+        return varattachs
+
 class RGroup():
 
-    def __init__(self, id) -> None:
+    def __init__(self, id):
         self.id = id
         self.components = []
         self.inchi = ""
-        self.index = None
         self.child_rgroups = []
      
     def get_id(self):
@@ -458,7 +532,6 @@ class RGroup():
         component = {}
         component["mol"] = mol
         component["attachments"] = attachments
-        component["linker_indices"] = []
         self.components.append(component)
         return None
     
@@ -467,40 +540,35 @@ class RGroup():
         # adds pseudoatoms to the Mol structure to represent the linkage points
         # back to the parent structure
         # Also sets list of indices for these atoms. 
-        parent_linker_indices = []
         for component in self.components:
             mol = component["mol"]
             attachments = component["attachments"]
             atoms = mol.GetAtoms()
-            if len(atoms) > 1:
-                # Single atom R groups are treated differently
-                for atom in atoms:
-                    atom_idx = atom.GetIdx()
-                    # RDKit labels start at 0 but molfile labels start at 1
-                    n = atom_idx + 1
-                    for attachment in attachments:
-                        if attachment[1] == n:
-                            edit_mol = EditableMol(mol)
-                            xe_atom = Atom(54)
-                            xe_atom.SetIsotope(31)
-                            xe_idx = edit_mol.AddAtom(xe_atom)
-                            edit_mol.AddBond(
-                                atom_idx,
-                                xe_idx, 
-                                order=Chem.rdchem.BondType.SINGLE
-                                )
-                            mol = edit_mol.GetMol()
-                            parent_linker_indices.append(xe_idx + 1)
-                component["linker_indices"] = parent_linker_indices
+            # Single atom R groups are treated differently
+            for atom in atoms:
+                atom_idx = atom.GetIdx()
+                # RDKit labels start at 0 but molfile labels start at 1
+                n = atom_idx + 1
+                for attachment in attachments:
+                    if attachment[1] == n:
+                        edit_mol = EditableMol(mol)
+                        xe_atom = Atom(54)
+                        xe_atom.SetIsotope(31)
+                        xe_idx = edit_mol.AddAtom(xe_atom)
+                        edit_mol.AddBond(
+                            atom_idx,
+                            xe_idx, 
+                            order=Chem.rdchem.BondType.SINGLE
+                            )
+                        mol = edit_mol.GetMol()
                 component["mol"] = mol
-                
+
     def generate_component_inchis(self, rgroups):
 
         for component in self.components:
             mol = component["mol"]
-            linker_indices = component["linker_indices"]
             markinchi = MarkInChI(
-                mol, rgroups=rgroups, parent_linker_indices=linker_indices)
+                mol, rgroups=rgroups)
             inchi = markinchi.get_markinchi()
             component["inchi"] = inchi
 
@@ -580,144 +648,117 @@ class RGroup():
     def get_final_inchi(self):
         inchi = self.inchi
         return inchi
-    
-    def set_index_from_map(self, rgroup_mapping):
-        index = rgroup_mapping[self.id]
-        self.index = index
-    
-    def get_index(self):
-        return self.index
-        
 
+        
 class VarAttach():
 
-    def __init__(self, line):
-        self.line = line
-        self.endpts = []
-        self.atom_indices = []
-        self.struct = None #Mol for the variable attachment
-        self.struct_inchi = ""
+    def __init__(self, mol, original_indices, endpts):
+        self.mol = mol
+        self.original_indices = original_indices
+        self.endpts = endpts
+        self.nested = False
+        self.inchi = ""
+        self.ranker = ""       
 
-    def set_endpts(self):
-        #Gets the indices of the atoms on the core structure this variable
-        #attachment can attach to and stores them in self.endpts
-        endpts = []
-        line = self.line.split("ENDPTS")[1]
-        line = line.split("(")[1]
-        line = line.split(")")[0]
-        endpt_strings = line.split()
-        endpt_strings = endpt_strings[1:]
-        for endpt_string in endpt_strings:
-            endpts.append(int(endpt_string))
-        self.endpts = sorted(endpts)
+        
+    def get_mol(self):
+        return self.mol
+    
+    def get_endpts(self):
+        return self.endpts
+    
+    def get_original_indices(self):
+        return self.original_indices
+        
+    def set_nested(self):
+        self.nested = True
 
-    def set_atom_indices(self):
-        #Gets the indices of the placeholder atom for this variable attahcment
-        #and the atom on the variable attachment it is connected to. It is 
-        #not clear at this point which index is which - we work that out later
-        line_parts = self.line.split()
-        atom1_idx = int(line_parts[4])
-        atom2_idx = int(line_parts[5])
-        self.atom_indices = [atom1_idx, atom2_idx]
+    def is_nested(self):
+        return self.nested
+    
+    def get_inchi(self):
+        return self.inchi
 
-    def split(self, core):
-        #Splits the molecule core into the core of the molecule and the 
-        #variable attachment. Returns the stripped core and stores the 
-        #attachment as a Mol in self.attachment
-
-
-        frag_indices = []
-        frags = Chem.GetMolFrags(
-            core, asMols=True, fragsMolAtomMapping = frag_indices
-            )
-        frags = list(zip(frags, frag_indices))
-        for frag in frags:
-            #Work out which fragment is the attachment by checking to see
-            #whether it contains one of the indices stored in self.atom_indices
-            is_attachment = False
-            for atom_idx in self.atom_indices:
-                if atom_idx - 1 in frag[1]:
-                    is_attachment = True
-            
-            #If it is the attachment, remove the placeholder atom and add a
-            #xenon atom placeholder instead - this will be turned into a Zz
-            #later. 
-            #This is maybe not the most elegant way of doing this but other 
-            #methods seem to cause issues as it seems like RDKit is still 
-            #trying to store variable attachment data for the molecule which
-            #causes issues if we try to use ReplaceAtom() instead of doing it
-            #manually. I'm not sure why that is but this method seems to work.
-            if is_attachment:
-                attachment = frag[0]
-                for i, atom in enumerate(attachment.GetAtoms()):
-                    if atom.GetAtomicNum() == 0:
-                        neighbor_indices = []
-                        for neighbor in atom.GetNeighbors():
-                            neighbor_indices.append(neighbor.GetIdx())
-                        
-                        edit_mol = EditableMol(attachment)
-                        xe_atom = Atom(54)
-                        xe_idx = edit_mol.AddAtom(xe_atom)
-                        for neighbor_idx in neighbor_indices:
-                            edit_mol.AddBond(
-                                neighbor_idx,
-                                xe_idx, 
-                                order=Chem.rdchem.BondType.SINGLE
-                                )
-                        edit_mol.RemoveAtom(i)
-                        attachment = edit_mol.GetMol()
-                        
+    def reform_structure(self):
+        # For any nested variable attachments, reforms the variable attachment
+        # bond, now referring to the new indices on this fragment
+        # Also turn the linker back to the parent into a labelled Xe atom
+        for bond in self.mol.GetBonds():
+            if bond.HasProp("_MolFileBondEndPts"):
                 
+                endpts_string = bond.GetProp("_MolFileBondEndPts")
+                endpts_string = endpts_string[1:len(endpts_string)-1]
+                endpts = endpts_string.split()
+                endpts = endpts[1:]
+                for i, endpt in enumerate(endpts):
+                    endpts[i] = int(endpt)
 
-            else:
-                core = frag[0]
-         
-        self.struct = attachment
-        return core
+                if endpts == self.endpts:
+                    bond.ClearProp("_MolFileBondEndPts")
+                    for atom in (bond.GetBeginAtom(), bond.GetEndAtom()):
+                        if atom.GetSymbol() == "*":
+                            atom.SetAtomicNum(54)
+                            atom.SetIsotope(31)
+
+                else:
+                    new_endpts = []
+                    for atom in self.mol.GetAtoms():
+                        if int(atom.GetProp("molAtomMapNumber")) in endpts:
+                            new_endpts.append(str(atom.GetIdx() + 1))
+                    new_string = "("
+                    new_string += str(len(new_endpts)) + " "
+                    for new_endpt in new_endpts:
+                        new_string += str(new_endpt) + " "
+                    new_string = new_string[:len(new_string)-1] + ")"
+                    bond.SetProp("_MolFileBondEndPts", new_string)
+
+    def add_nested_attachment(self, attachment):
+        self.mol = Chem.CombineMols(self.mol, attachment.get_mol())
         
-    def generate_struct_inchi(self):
-        #Gets the InChI for the variable attachment structure
-        atoms = self.struct.GetAtoms()
-        if len(atoms) == 2:
-            for atom in atoms:
-                if atom.GetAtomicNum() != 54:
-                    self.struct_inchi = atom.GetSymbol()
-        else:
-            self.struct_inchi = Chem.MolToInchi(self.struct)
-        self.struct_inchi = self.struct_inchi.replace("InChI=1S/", "")
-        self.struct_inchi = self.struct_inchi.replace("Xe", "Zz")
+    def generate_inchi(self, rgroups):
+
+        markinchi = MarkInChI(
+            self.mol, rgroups
+        )
+
+        inchi = markinchi.get_markinchi()
+
+        self.inchi = inchi
+        return inchi
+
+    def remap_endpts(self, mapping):
+
+        new_endpts = []
+        for endpt in self.endpts:
+            new_endpt = mapping[endpt]
+            new_endpts.append(new_endpt)
         
-    def get_final_inchi(self, mapping):
-        #Constructs the full MarkInChI label including the connections
+        self.endpts = sorted(new_endpts)
+
+    def get_endpt_sum(self):
+
+        # Used for canonically sorting variable attachments
+
+        endpt_sum = 0
+
+        for endpt in self.endpts:
+            endpt_sum += endpt
+
+        return endpt_sum
+
+    def get_final_inchi(self):
+
         final_inchi = "<M>"
-        canonical_endpts = []
-        for endpt in self.endpts:
-            canoncical_endpt = mapping[endpt]
-            canonical_endpts.append(canoncical_endpt)
 
-        canonical_endpts = sorted(canonical_endpts)
-        for endpt in canonical_endpts:
+        for endpt in self.endpts:
             final_inchi += "%iH," % endpt
-        final_inchi = final_inchi[:len(final_inchi)-1]
-        final_inchi += "-"
-        final_inchi += self.struct_inchi
+        
+        final_inchi = final_inchi[:len(final_inchi) - 1] + "-"
+        final_inchi += self.inchi
+        final_inchi += "</M>"
+
         return final_inchi
-
-    def set_ranker(self, mapping):
-        #Used for determining order of variable attachments in the final
-        #MarkInChI string
-        sum = 0
-        for endpt in self.endpts:
-            sum += mapping[endpt]
-        ranker = str(sum)
-        ranker += self.struct_inchi
-        self.ranker = ranker
-
-    def get_ranker(self):
-        return self.ranker
-
-
-
+    
 def ctab_to_molblock(ctab):
         #Adds necessary beginning and end to a CTAB to allow RDKit to read it
         #as a molblock
@@ -778,6 +819,10 @@ if __name__ == "__main__":
             debug = True
         elif opt == "-i":
             filename = arg
+    
+    if len(argv) == 0:
+        filename = "molfiles\\structures_for_testing\\ext9.mol"
+        debug = True
 
     filedir = os.path.join(os.getcwd(), filename)
     markinchi = MarkMol3000()
