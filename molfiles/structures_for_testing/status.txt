@@ -1,0 +1,70 @@
+molfile	status (Y - working, N - not working, C - non canonical)
+ext1	Y
+ext2	Y
+ext3	Y
+ext4	Y	
+ext5	Y
+ext6	Y
+ext7	Y
+ext8	Y
+ext9	Y - file had to be cleaned up manually
+ext10	Y
+ext11	Y
+ext12	Y
+ext13	Y
+ext14	Y
+ext15	Y
+ext16	Y
+ext17	Y
+ext18	Y
+ext19	Y
+ext20	Y
+ext21	Y - different canonicalisation
+ext22	Y - different canonicalisation
+ext23   Y
+ext24   Y
+ext25   Y
+ext26   Y - different canonicalisation
+ext27   Y
+ext28   Y
+ext29   Y
+ext30   Y
+ext31   Y
+ext32   Y
+ext33   Y
+ext34   Y
+ext35   Y
+ext36   Y
+ext37   Y - this is the same as 35 but the previous code had them as different
+ext38   Y
+ext39   Y
+ext40   Y
+ext41   Y
+ext42   Y
+ext43   Y - different canonicalisation
+ext44   Y - different canonicalisation
+ext45   Y
+ext46   Y
+ext47   Y
+ext48   Y
+ext49   Y
+ext50   Y
+ext51   Y
+ext52   Y
+ext53   Y
+ext54   Y
+ext55   Y
+ext56   Y - different order due to alphabetisation differences
+ext57   Y
+ext58   Y
+ext59   Y - but could maybe be made neater?
+ext60   Y
+ext61   Y
+ext62   Y - and isotope info is properly carried through now
+ext63   Y
+ext64   N - needs looking into
+ext65   Y
+ext66   Y
+ext67   Y - but potential issue if sum of attach points and alphabetisation the same
+ext68   
+

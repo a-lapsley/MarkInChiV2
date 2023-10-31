@@ -165,9 +165,10 @@ class MarkInChI():
     def get_markinchi(self):
         
         
+        
         self.mol, varattachs = self.get_varattachs(self.mol)
         
-        listatoms = self.get_listatoms()
+        self.mol, listatoms = self.get_listatoms(self.mol)
         
         child_rgroups = self.get_child_rgroups(self.mol)
 
@@ -189,12 +190,26 @@ class MarkInChI():
                 self.mol, rgroup_mapping
             )
 
-            
+        # Generate MarkInChIs for each Variable Attachment, and sort them 
+        # alphabetically
+        if len(varattachs) != 0:
+            for varattach in varattachs:
+                varattach.generate_inchi(self.rgroups)
+
+            varattachs = sorted(varattachs, key=lambda v: v.get_inchi())
+
+        listatoms = self.sort_listatoms_by_atomic_nums(listatoms)
+
+        self.mol, varattachs, listatoms = self.canonize(
+            self.mol, varattachs, listatoms
+            )
+
         # Convert pseudoatoms to Xe and isotopically label according to R label
         self.mol = self.rgroup_pseudoatoms_to_xe(self.mol)
 
         # Canonicalise the atom indices of self.mol by converting to InChI and 
         # back again
+
         core_inchi, aux = Chem.MolToInchiAndAuxInfo(self.mol)
         self.mol = Chem.MolFromInchi(core_inchi)
 
@@ -203,7 +218,7 @@ class MarkInChI():
 
         listatoms = self.remap_listatoms(listatoms, mapping)
         listatoms = self.get_atom_symbols(listatoms)
-        print(listatoms)
+        #listatoms = self.sort_listatoms(listatoms)
 
         # Deal with variable attachments
         for varattach in varattachs:
@@ -220,8 +235,7 @@ class MarkInChI():
 
         
 
-        #print(final_inchi)
-        
+        #Show(self.mol, indices=True)
         return final_inchi
 
     def sort_rgroups(self, rgroups):
@@ -336,11 +350,15 @@ class MarkInChI():
 
         # If the fragment is just a single R group, we don't need the core bit
         # (But only if it's not final, otherwise it's not a proper MarkInChI)
+        # Also check the Xe doesn't have a mass of 31, which would mean it is a 
+        # linker to parent, and so the fragment is an H atom, so we do need the
+        # core
         mol_is_rgroup = False
         if len(self.mol.GetAtoms()) == 1 and not self.final:
             if self.mol.GetAtomWithIdx(0).GetAtomicNum() == 54:
-                core_inchi = ""
-                mol_is_rgroup = True
+                if self.mol.GetAtomWithIdx(0).GetIsotope() != 31:
+                    core_inchi = ""
+                    mol_is_rgroup = True
 
 
         # Obtain the InChI string before the isotope layer, the isotope layer 
@@ -395,17 +413,17 @@ class MarkInChI():
 
                 xe_atom_count += 1
         
-        # Add Markush layer for each variable attachment
-
-        for varattach in varattachs:
-            markush_strings += varattach.get_final_inchi()
-
         # Add Markush layer for the atom lists
 
         for listatom in listatoms:
             markush_strings += self.get_listatom_string(listatom)
 
+        # Add Markush layer for each variable attachment
 
+        for varattach in varattachs:
+            markush_strings += varattach.get_final_inchi()
+
+        
         if xe_atom_count == 1:
             markush_strings = markush_strings.replace("<M></M>","")
 
@@ -534,35 +552,81 @@ class MarkInChI():
 
         return varattachs
 
-    def get_listatoms(self):
+    def get_listatoms(self, mol):
 
         # Gets the list of atomic numbers for the index of each listatom
+        # Removes the listatom and replaces it with a normal atom according to
+        # the following rules:
+        # If carbon present in the list, replace with C
+        # Otherwise, replace with lowest atomic number element other than H
 
         listatoms = []
-        for atom in self.mol.GetAtoms():
+        for atom in mol.GetAtoms():
             atom.ClearProp("molAtomMapNumber")
             if atom.HasQuery():
                 smarts = atom.GetSmarts()
+                if smarts != "*":
 
-                smarts = smarts.replace("[","")
-                smarts = smarts.replace("]","")
-                smarts = smarts.replace("#","")
-                smarts_parts = smarts.split(",")
-                
-                atomic_nums = []
+                    smarts = smarts.replace("[","")
+                    smarts = smarts.replace("]","")
+                    smarts = smarts.replace("#","")
+                    smarts_parts = smarts.split(",")
+                    
+                    atomic_nums = []
 
-                for part in smarts_parts:
-                    atomic_nums.append(int(part))
-                
-                atomic_nums = sorted(atomic_nums)
+                    for part in smarts_parts:
+                        atomic_nums.append(int(part))
+                    
+                    atomic_nums = sorted(atomic_nums)
 
-                idx = atom.GetIdx() + 1
-                listatom = {}
-                listatom["idx"] = idx
-                listatom["atomic_nums"] = atomic_nums
-                listatoms.append(listatom)
-                
-        return listatoms
+                    idx = atom.GetIdx() + 1
+                    
+                    edit_mol = EditableMol(mol)
+
+                    if 6 in atomic_nums:
+                        new_atom = Atom(6)
+                    elif 1 in atomic_nums:
+                        new_atom = Atom(atomic_nums[1])
+                    else:
+                        new_atom = Atom(atomic_nums[0])
+                    
+                    # Arbitrary property so we can track this atom
+                    new_atom.SetProp("isList","1")
+                    new_atom_idx = edit_mol.AddAtom(new_atom)
+
+                    for bond in atom.GetBonds():
+                        
+                        if bond.GetBeginAtomIdx() == idx - 1:
+                            new_bond_end = bond.GetEndAtomIdx()
+                        else:
+                            new_bond_end = bond.GetBeginAtomIdx()
+
+                        bond_type = bond.GetBondType()
+
+                        edit_mol.AddBond(
+                            new_atom_idx, new_bond_end, order=bond_type
+                        )
+                    
+                    edit_mol.RemoveAtom(idx - 1)
+
+                    mol = edit_mol.GetMol()
+                    
+                    listatom = {}
+                    for atom in mol.GetAtoms():
+                        if atom.HasProp("isList"):
+                            listatom["idx"] = atom.GetIdx() + 1
+                            atom.ClearProp("isList")
+
+                    listatom["atomic_nums"] = atomic_nums
+                    listatoms.append(listatom)
+
+        # I don't know why Atom Map Numbers get added here but we need to remove
+        # them as they cause issues with the canonicalization later
+
+        for atom in mol.GetAtoms():
+            atom.ClearProp("molAtomMapNumber")
+
+        return mol, listatoms
 
     def remap_listatoms(self, listatoms, mapping):
         # Remaps the listatoms to the new indices of the molecule, and sort
@@ -612,6 +676,128 @@ class MarkInChI():
 
         return markush_string
     
+    def canonize(self, mol, varattachs, listatoms):
+        # Canonicalizes the indices of the molecule according to the RDKit 
+        # canonicalization algorithm. 
+        
+        
+
+        # and then turn the Og and Tn back into H
+        # Also update varattach endpoints and listatoms with these new indices
+
+        # For each Varattach, add an Og atom, isotopically labelled according
+        # to the order of the Varattach in the list
+        # We reverse the order of the list, so that the highest priority group
+        # (the first one alphabetically) has the highest mass number, which will
+        # give the connection points the lower indices after canonization
+
+        for i, varattach in enumerate(varattachs[::-1]):
+            for endpt in varattach.get_endpts():
+                mol.UpdatePropertyCache()
+                #Remove an implicit hydrogen
+                core_atom = mol.GetAtomWithIdx(endpt - 1)
+                hydrogens = core_atom.GetTotalNumHs()
+                #core_atom.SetNoImplicit(True)
+                if hydrogens > 0:
+                    core_atom.SetNumExplicitHs(hydrogens - 1)
+                
+                # Check whether the atom has already been marked by a labelled
+                # Og. If it has, change the isotope to be the larger of the 
+                # 2, and otherwise, add a new Og. 
+
+                atom_already_marked = False
+
+                for neighbor in core_atom.GetNeighbors():
+                    if neighbor.GetAtomicNum() == 118:
+                        if neighbor.GetIsotope() < (i + 1):
+                            neighbor.SetIsotope(i + 1)
+                        atom_already_marked = True
+
+                if not atom_already_marked:
+                    edit_mol = EditableMol(mol)
+                    atom = Atom(118)
+                    atom.SetIsotope(i + 1)
+                    atom_idx = edit_mol.AddAtom(atom)
+                    edit_mol.AddBond(
+                        endpt - 1, atom_idx, order=Chem.rdchem.BondType.SINGLE
+                        )
+                    mol = edit_mol.GetMol()
+
+
+        # For each listatom, add a Tn atom, isotopically labelled according to
+        # the order of the listatom in the list
+        for i, listatom in enumerate(listatoms[::-1]):
+            core_atom = mol.GetAtomWithIdx(listatom["idx"]-1)
+
+            atom_already_marked = False
+
+            #TODO: make some way of canonicalizing atoms which are both list
+            #atoms and endpoints for a variable attachment
+            #Seems like a rare enough case to ignore for now. 
+
+            for neighbor in core_atom.GetNeighbors():
+                if neighbor.GetAtomicNum() == 118:
+                    atom_already_marked = True
+
+            if not atom_already_marked:
+                edit_mol = EditableMol(mol)
+                atom = Atom(117)
+                atom.SetIsotope(i + 1)
+                atom_idx = edit_mol.AddAtom(atom)
+                edit_mol.AddBond(
+                    listatom["idx"] - 1, atom_idx, 
+                    order=Chem.rdchem.BondType.SINGLE
+                )
+                mol = edit_mol.GetMol()
+        
+        # Generate the RDKit canonical ranking and renumber the atoms
+        mol.UpdatePropertyCache()
+        ranking = Chem.CanonicalRankAtoms(mol)
+        new_order = zip(*sorted([(j, i) for i, j in enumerate(ranking)]))
+        
+        new_order = tuple(new_order)[1]
+        new_order = new_order[::-1]
+
+        mol = Chem.RenumberAtoms(mol, new_order)
+        # Remap the varattach endpoints
+        for varattach in varattachs:
+            endpts = varattach.get_endpts()
+            new_endpts = list(map(lambda i: new_order.index(i - 1) + 1, endpts))
+            new_endpts = sorted(new_endpts)
+            varattach.set_endpts(new_endpts)
+
+        # Remap the listatom indices
+        for listatom in listatoms:
+            old_index = listatom["idx"]
+            new_index = new_order.index(old_index - 1) + 1
+            listatom["idx"] = new_index
+    
+        # Turn the placeholder atoms back into Hs
+        for atom in mol.GetAtoms():
+            if atom.GetAtomicNum() in (117, 118):
+                atom.SetAtomicNum(1)
+                atom.SetIsotope(0)
+        
+        return mol, varattachs, listatoms
+
+    def sort_listatoms_by_atomic_nums(self, listatoms):
+        # Sorts listatoms according to the atomic numbers it refers to.
+        # We want highest priority to go to the list containing the highest 
+        # atomic number, and if two lists have the same highest, go to the next
+        # highest, and so on
+        # This can be easily done by summing over 2^(n-1) for n in each list,
+        #  which represents each possible list by a unique integer
+
+        for listatom in listatoms:
+            sum = 0
+            for n in listatom["atomic_nums"]:
+                sum += 2**(n-1)
+            listatom["sum"] = sum
+
+        listatoms = sorted(listatoms, key=lambda item: item["sum"])
+
+        return listatoms
+
 class RGroup():
 
     def __init__(self, id):
@@ -766,6 +952,10 @@ class VarAttach():
     def get_endpts(self):
         return self.endpts
     
+    def set_endpts(self, endpts):
+        self.endpts = endpts
+        return None
+
     def get_original_indices(self):
         return self.original_indices
         
@@ -879,7 +1069,7 @@ def ctab_to_molblock(ctab):
         return molblock
 
 def Show(mols, subImgSize=(200, 200), title='RDKit Molecule',
-            stayInFront=True, indices=False, **kwargs):
+            stayInFront=True, indices=False, tidyCoords=True, **kwargs):
   """
   Generates a picture of molecule(s) and displays it in a Tkinter window.
   Only if in debug mode, otherwise does nothing. 
@@ -913,6 +1103,8 @@ def Show(mols, subImgSize=(200, 200), title='RDKit Molecule',
         if indices:
             for atom in mols.GetAtoms():
                 atom.SetProp("molAtomMapNumber", str(atom.GetIdx() + 1))
+        if tidyCoords:
+            Chem.rdDepictor.Compute2DCoords(mols)
         ShowMol(mols)
     
 
@@ -928,7 +1120,7 @@ if __name__ == "__main__":
             filename = arg
     
     if len(argv) == 0:
-        filename = "molfiles\\structures_for_testing\\ext5.mol"
+        filename = "molfiles\\structures_for_testing\\ext40.mol"
         debug = True
 
     filedir = os.path.join(os.getcwd(), filename)
