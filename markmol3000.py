@@ -202,13 +202,15 @@ class MarkInChI():
         # for detailed explanation)
         listatoms = self.sort_listatoms_by_atomic_nums(listatoms)
 
-        # Canonicalize the molecule indices according to the RDKit algorithm
-        self.mol, varattachs, listatoms = self.canonize(
-            self.mol, varattachs, listatoms
-            )
+        
 
         # Convert pseudoatoms to Xe and isotopically label according to R label
         self.mol = self.rgroup_pseudoatoms_to_xe(self.mol)
+
+        # Canonicalize the molecule indices according to the RDKit algorithm
+        self.mol, varattachs, listatoms = self.canonize_inchi(
+            self.mol, varattachs, listatoms
+            )
 
         # Canonicalise the atom indices of self.mol by converting to InChI and 
         # back again
@@ -692,14 +694,13 @@ class MarkInChI():
 
         return markush_string
     
-    def canonize(self, mol, varattachs, listatoms):
+    def canonize_rdkit(self, mol, varattachs, listatoms):
+        #
+        #   THIS FUNCTION IS NOT CALLED
+        #   IT IS HERE FOR TESTING PURPOSES ONLY
+        # 
         # Canonicalizes the indices of the molecule according to the RDKit 
         # canonicalization algorithm. 
-        
-        
-
-        # and then turn the Og and Tn back into H
-        # Also update varattach endpoints and listatoms with these new indices
 
         # For each Varattach, add an Og atom, isotopically labelled according
         # to the order of the Varattach in the list
@@ -788,6 +789,118 @@ class MarkInChI():
 
 
 
+        return mol, varattachs, listatoms
+
+    def canonize_inchi(self, mol, varattachs, listatoms):
+        
+        # Canonicalizes the indices of the molecule using the InChI algorithm,
+        # labelling the variable attachments and listatoms to break any 
+        # symmetry to ensure the end result is canonical.
+
+        # For each variable attachment, add a chain of Rn atoms to each endpoint
+        # The chain length corresponds to the highest priority variable
+        # attachment that has this endpoint
+        # 
+        # Iterate through attachments in alphabetical order (they have already
+        # been sorted) - this is the order of priority
+        for i, varattach in enumerate(varattachs):
+            for endpt in varattach.get_endpts():
+
+                mol = Chem.rdmolops.AddHs(mol)
+
+                core_atom = mol.GetAtomWithIdx(endpt - 1)
+                
+                # If the endpoint has already been labelled by a higher priority
+                # group, don't do anything further
+                already_marked = False
+                for neighbor in core_atom.GetNeighbors():
+                    if neighbor.GetAtomicNum() == 86:
+                        already_marked = True
+
+                if not already_marked:
+                    
+                    idx_a = None
+                    # Replace one of the hydrogens on this endpoint with a Rn
+                    for neighbor in core_atom.GetNeighbors():
+                        if neighbor.GetAtomicNum() == 1 and idx_a == None:
+                            neighbor.SetAtomicNum(86)
+                            idx_a = neighbor.GetIdx()
+
+                    # Extend the chain of Rn atoms according to the priority of
+                    # the group
+                    # E.g. if there are 3 groups, highest priority group has a 
+                    # chain length of 3, so add 2 more Rn (we have already
+                    # added the first one in the previous step)
+
+                    for j in range(len(varattachs) - i - 1):
+                        edit_mol = EditableMol(mol)
+                        idx_b = edit_mol.AddAtom(Chem.Atom(86))
+                        edit_mol.AddBond(
+                            idx_a,
+                            idx_b,
+                            order=Chem.rdchem.BondType.SINGLE
+                        )
+                        mol = edit_mol.GetMol()
+                        idx_a = idx_b
+                    
+                mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
+
+        # Generate the InChI for the molecule to get the AuxInfo, and get the 
+        # mapping from the original indices to the canonical indices
+        #
+        # With this mapping, the element of index i in the list is the index 
+        # of the atom in the original molecule that gets mapped to the canonical
+        # index i
+        aux = Chem.MolToInchiAndAuxInfo(mol)[1]
+
+        aux = aux.split("/N:")[1]
+        aux = aux.split("/")[0]
+        new_indices = []
+        for idx in aux.split(","):
+            new_indices.append(int(idx)-1)
+        new_indices = tuple(new_indices)
+        # Reverse the list - arbitrary but means the highest priority group now
+        # has the lowest index 
+        new_indices = new_indices[::-1]
+        
+        mol = Chem.RenumberAtoms(mol, new_indices)
+        # Label the atoms to keep track of their new index when we remove the 
+        # Rn atoms
+        for atom in mol.GetAtoms():
+            atom.SetProp("molAtomMapNumber",str(atom.GetIdx()))
+
+        # Remove any Rn and H atoms 
+        edit_mol = EditableMol(mol)
+        edit_mol.BeginBatchEdit()
+        for atom in mol.GetAtoms():
+            if atom.GetAtomicNum() in (1,86):
+                edit_mol.RemoveAtom(atom.GetIdx())
+        edit_mol.CommitBatchEdit()
+        mol = edit_mol.GetMol()
+        
+        # Get a mapping from the new index from the canonicalization to the 
+        # index of the atom in the stripped molecule without the Rn atoms
+        new_idx_to_stripped_idx_map = {}
+        for atom in mol.GetAtoms():
+            new_idx = int(atom.GetProp("molAtomMapNumber")) + 1
+            stripped_idx = atom.GetIdx() + 1
+            new_idx_to_stripped_idx_map[new_idx] = stripped_idx
+        
+        # Generate a final map from the original atom indices to the indices in 
+        # the stripped molecule
+        final_map = []
+        for i in range(len(mol.GetAtoms())):
+            new_idx = new_indices.index(i)
+            final_idx = new_idx_to_stripped_idx_map[new_idx + 1]
+            final_map.append(final_idx)
+
+        # Remap the varattach endpoints using this map
+        for varattach in varattachs:
+            endpts = varattach.get_endpts()
+            new_endpts = list(map(lambda i: final_map[i-1], endpts))
+            new_endpts = sorted(new_endpts)
+            varattach.set_endpts(new_endpts)
+       
         return mol, varattachs, listatoms
 
     def sort_listatoms_by_atomic_nums(self, listatoms):
@@ -1130,7 +1243,7 @@ if __name__ == "__main__":
             filename = arg
     
     if len(argv) == 0:
-        filename = "molfiles\\structures_for_testing\\ext64.mol"
+        filename = "molfiles\\structures_for_testing\\ext27.4.mol"
         debug = True
 
     filedir = os.path.join(os.getcwd(), filename)
