@@ -62,7 +62,7 @@ ext60   Y
 ext61   Y
 ext62   Y - and isotope info is properly carried through now
 ext63   Y
-ext64   N - needs looking into
+ext64   Y
 ext65   Y
 ext66   Y
 ext67   Y - but potential issue if sum of attach points and alphabetisation the same

@@ -198,8 +198,11 @@ class MarkInChI():
 
             varattachs = sorted(varattachs, key=lambda v: v.get_inchi())
 
+        # Sort the listatoms according to their atomic numbers (see function
+        # for detailed explanation)
         listatoms = self.sort_listatoms_by_atomic_nums(listatoms)
 
+        # Canonicalize the molecule indices according to the RDKit algorithm
         self.mol, varattachs, listatoms = self.canonize(
             self.mol, varattachs, listatoms
             )
@@ -218,7 +221,6 @@ class MarkInChI():
 
         listatoms = self.remap_listatoms(listatoms, mapping)
         listatoms = self.get_atom_symbols(listatoms)
-        #listatoms = self.sort_listatoms(listatoms)
 
         # Deal with variable attachments
         for varattach in varattachs:
@@ -559,7 +561,8 @@ class MarkInChI():
         # the following rules:
         # If carbon present in the list, replace with C
         # Otherwise, replace with lowest atomic number element other than H
-
+        
+        
         listatoms = []
         for atom in mol.GetAtoms():
             atom.ClearProp("molAtomMapNumber")
@@ -579,8 +582,9 @@ class MarkInChI():
                     
                     atomic_nums = sorted(atomic_nums)
 
-                    idx = atom.GetIdx() + 1
                     
+                    idx = atom.GetIdx() + 1
+
                     edit_mol = EditableMol(mol)
 
                     if 6 in atomic_nums:
@@ -610,7 +614,19 @@ class MarkInChI():
                     edit_mol.RemoveAtom(idx - 1)
 
                     mol = edit_mol.GetMol()
-                    
+
+                    new_indices = []
+
+                    for i in range(len(mol.GetAtoms())):
+                        if i == idx - 1:
+                            new_indices.append(new_atom_idx - 1)
+                        elif i < idx:
+                            new_indices.append(i)
+                        elif i >= idx:
+                            new_indices.append(i - 1)
+
+                    mol = Chem.RenumberAtoms(mol, tuple(new_indices))
+
                     listatom = {}
                     for atom in mol.GetAtoms():
                         if atom.HasProp("isList"):
@@ -651,7 +667,7 @@ class MarkInChI():
 
         periodic_table = Chem.rdchem.GetPeriodicTable()
 
-        for listatom in sorted(listatoms):
+        for listatom in listatoms:
             atom_symbols = []
             if 6 in listatom["atomic_nums"]:
                 atom_symbols.append("C")
@@ -724,31 +740,13 @@ class MarkInChI():
                     mol = edit_mol.GetMol()
 
 
-        # For each listatom, add a Tn atom, isotopically labelled according to
-        # the order of the listatom in the list
+        # For each listatom, turn the atom into an isotopically labelled Tn
+        # atom
         for i, listatom in enumerate(listatoms[::-1]):
             core_atom = mol.GetAtomWithIdx(listatom["idx"]-1)
 
-            atom_already_marked = False
-
-            #TODO: make some way of canonicalizing atoms which are both list
-            #atoms and endpoints for a variable attachment
-            #Seems like a rare enough case to ignore for now. 
-
-            for neighbor in core_atom.GetNeighbors():
-                if neighbor.GetAtomicNum() == 118:
-                    atom_already_marked = True
-
-            if not atom_already_marked:
-                edit_mol = EditableMol(mol)
-                atom = Atom(117)
-                atom.SetIsotope(i + 1)
-                atom_idx = edit_mol.AddAtom(atom)
-                edit_mol.AddBond(
-                    listatom["idx"] - 1, atom_idx, 
-                    order=Chem.rdchem.BondType.SINGLE
-                )
-                mol = edit_mol.GetMol()
+            core_atom.SetAtomicNum(117)
+            core_atom.SetIsotope(i + 1)
         
         # Generate the RDKit canonical ranking and renumber the atoms
         mol.UpdatePropertyCache()
@@ -772,12 +770,24 @@ class MarkInChI():
             new_index = new_order.index(old_index - 1) + 1
             listatom["idx"] = new_index
     
-        # Turn the placeholder atoms back into Hs
+        # Turn the placeholder atoms back into Hs or original atoms
         for atom in mol.GetAtoms():
-            if atom.GetAtomicNum() in (117, 118):
+            if atom.GetAtomicNum() == 118:
                 atom.SetAtomicNum(1)
                 atom.SetIsotope(0)
-        
+            if atom.GetAtomicNum() == 117:
+                i = atom.GetIsotope() - 1
+                atom.SetIsotope(0)
+                atomic_nums = listatoms[::-1][i]["atomic_nums"]
+                if 6 in atomic_nums:
+                    atom.SetAtomicNum(6)
+                elif 1 in atomic_nums:
+                    atom.SetAtomicNum(atomic_nums[1])
+                else:
+                    atom.SetAtomicNum(atomic_nums[0])
+
+
+
         return mol, varattachs, listatoms
 
     def sort_listatoms_by_atomic_nums(self, listatoms):
@@ -1120,7 +1130,7 @@ if __name__ == "__main__":
             filename = arg
     
     if len(argv) == 0:
-        filename = "molfiles\\structures_for_testing\\ext40.mol"
+        filename = "molfiles\\structures_for_testing\\ext64.mol"
         debug = True
 
     filedir = os.path.join(os.getcwd(), filename)
