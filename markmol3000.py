@@ -164,8 +164,11 @@ class MarkInChI():
 
     def get_markinchi(self):
         
+        # This is the main algorithm for generating the MarkInChI for a fragment
+        # or a molecule
         
-        
+        # Find any variable attachments, atom lists and child R groups on this
+        # fragment
         self.mol, varattachs = self.get_varattachs(self.mol)
         
         self.mol, listatoms = self.get_listatoms(self.mol)
@@ -202,12 +205,14 @@ class MarkInChI():
         # for detailed explanation)
         listatoms = self.sort_listatoms_by_atomic_nums(listatoms)
 
-        
-
         # Convert pseudoatoms to Xe and isotopically label according to R label
         self.mol = self.rgroup_pseudoatoms_to_xe(self.mol)
 
-        # Canonicalize the molecule indices according to the RDKit algorithm
+        # Canonicalize the molecule indices according to the InChI algorithm
+        # This is to ensure any variable attachments and listatoms with multiple
+        # equivalent indices are canonicalized
+        # Represent variable attachment points with chains of Rn atoms
+        # Represent list atoms with chains of Ne atoms
         self.mol, varattachs, listatoms = self.canonize_inchi(
             self.mol, varattachs, listatoms
             )
@@ -231,13 +236,10 @@ class MarkInChI():
         
         varattachs = self.sort_varattachs(varattachs)
 
-        
-
+        # Construct the final markinchi string
         final_inchi = self.finalise_markinchi(
             core_inchi, varattachs, listatoms
             )
-
-        
 
         #Show(self.mol, indices=True)
         return final_inchi
@@ -805,7 +807,7 @@ class MarkInChI():
         # been sorted) - this is the order of priority
         for i, varattach in enumerate(varattachs):
             for endpt in varattach.get_endpts():
-
+                mol.UpdatePropertyCache(strict=False)
                 mol = Chem.rdmolops.AddHs(mol)
 
                 core_atom = mol.GetAtomWithIdx(endpt - 1)
@@ -845,6 +847,33 @@ class MarkInChI():
                     
                 mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
 
+        # Add chains of Ne atoms for each listatom
+
+        for i, listatom in enumerate(listatoms):
+
+            core_atom = mol.GetAtomWithIdx(listatom["idx"] - 1)
+
+            if core_atom.GetAtomicNum() != 10:
+                core_atom.SetAtomicNum(10)
+                core_atom.SetNumExplicitHs(0)
+
+            idx_a = core_atom.GetIdx()
+
+            for j in range(len(listatoms) - i - 1):
+                edit_mol = EditableMol(mol)
+                #Isotopically label the extra Ne to track the ones we should
+                #remove
+                new_atom = Chem.Atom(10)
+                new_atom.SetIsotope(1)
+                idx_b = edit_mol.AddAtom(new_atom)
+                edit_mol.AddBond(
+                            idx_a,
+                            idx_b,
+                            order=Chem.rdchem.BondType.SINGLE
+                        )
+                mol = edit_mol.GetMol()
+                idx_a = idx_b           
+
         # Generate the InChI for the molecule to get the AuxInfo, and get the 
         # mapping from the original indices to the canonical indices
         #
@@ -869,15 +898,19 @@ class MarkInChI():
         for atom in mol.GetAtoms():
             atom.SetProp("molAtomMapNumber",str(atom.GetIdx()))
 
-        # Remove any Rn and H atoms 
+        # Remove any Rn and H atoms, and any Ne atoms that are on chains 
         edit_mol = EditableMol(mol)
         edit_mol.BeginBatchEdit()
         for atom in mol.GetAtoms():
             if atom.GetAtomicNum() in (1,86):
                 edit_mol.RemoveAtom(atom.GetIdx())
+
+            if atom.GetAtomicNum() == 10 and atom.GetIsotope() == 1:
+                edit_mol.RemoveAtom(atom.GetIdx())
+
         edit_mol.CommitBatchEdit()
         mol = edit_mol.GetMol()
-        
+
         # Get a mapping from the new index from the canonicalization to the 
         # index of the atom in the stripped molecule without the Rn atoms
         new_idx_to_stripped_idx_map = {}
@@ -901,6 +934,20 @@ class MarkInChI():
             new_endpts = sorted(new_endpts)
             varattach.set_endpts(new_endpts)
        
+        # Remap the listatoms and turn the atoms back to the correct element
+        for listatom in listatoms:
+            old_idx = listatom["idx"]
+            new_idx = final_map[old_idx - 1]
+            listatom["idx"] = new_idx
+            atom = mol.GetAtomWithIdx(new_idx - 1)
+            atomic_nums = listatom["atomic_nums"]
+            if 6 in atomic_nums:
+                atom.SetAtomicNum(6)
+            elif 1 in atomic_nums:
+                atom.SetAtomicNum(atomic_nums[1])
+            else:
+                atom.SetAtomicNum(atomic_nums[0])
+
         return mol, varattachs, listatoms
 
     def sort_listatoms_by_atomic_nums(self, listatoms):
@@ -1243,7 +1290,7 @@ if __name__ == "__main__":
             filename = arg
     
     if len(argv) == 0:
-        filename = "molfiles\\structures_for_testing\\ext27.4.mol"
+        filename = "molfiles\\structures_for_testing\\ext64.mol"
         debug = True
 
     filedir = os.path.join(os.getcwd(), filename)
