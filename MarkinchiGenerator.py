@@ -10,7 +10,7 @@ import sys, getopt
 debug = False
 
 
-class MarkMol3000(object):
+class MarkinchiGenerator(object):
 
     def __init__(self):
         self.molfile_lines = [] #Lines of v3000 .mol file that will be converted
@@ -241,7 +241,7 @@ class MarkInChI():
             core_inchi, varattachs, listatoms
             )
 
-        #Show(self.mol, indices=True)
+        Show(self.mol, indices=True)
         return final_inchi
 
     def sort_rgroups(self, rgroups):
@@ -1294,9 +1294,9 @@ if __name__ == "__main__":
         debug = True
 
     filedir = os.path.join(os.getcwd(), filename)
-    markinchi = MarkMol3000()
-    markinchi.load_from_file(filedir)
-    markinchi_string = markinchi.generate_markinchi()
+    markinchi_generator = MarkinchiGenerator()
+    markinchi_generator.load_from_file(filedir)
+    markinchi_string = markinchi_generator.generate_markinchi()
     print(markinchi_string)
 
     
