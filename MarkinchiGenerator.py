@@ -536,28 +536,41 @@ class MarkInChI():
         # of the atom in the original molecule that gets mapped to the canonical
         # index i
         aux = Chem.MolToInchiAndAuxInfo(mol)[1]
-
         aux = aux.split("/N:")[1]
         aux = aux.split("/")[0]
         new_indices = []
         for idx in aux.split(","):
             new_indices.append(int(idx)-1)
-        new_indices = tuple(new_indices)
+
         # Reverse the list - arbitrary but means the highest priority group now
-        # has the lowest index 
-        new_indices = new_indices[::-1]
+        # has the lowest index
+        if new_indices == [0]:
+            # Case of a single Xe atom 
+            new_indices = new_indices
+        elif new_indices == [1]:
+            # Case of a single H atom
+            new_indices.append(0)
+        else:
+            new_indices = new_indices[::-1]
         
+        new_indices = tuple(new_indices)
         mol = Chem.RenumberAtoms(mol, new_indices)
         # Label the atoms to keep track of their new index when we remove the 
         # Rn atoms
         for atom in mol.GetAtoms():
             atom.SetProp("molAtomMapNumber",str(atom.GetIdx()))
 
-        # Remove any Rn and H atoms, and any Ne atoms that are on chains 
+        # Remove any Rn, and any Ne atoms that are on chains
+        # Remove any H atoms that aren't labelled (i.e. don't remove if the 
+        # fragment is just an H atom)
         edit_mol = EditableMol(mol)
         edit_mol.BeginBatchEdit()
         for atom in mol.GetAtoms():
-            if atom.GetAtomicNum() in (1,86):
+            if atom.GetAtomicNum() == 86:
+                edit_mol.RemoveAtom(atom.GetIdx())
+
+            if (atom.GetAtomicNum() == 1 and 
+                not atom.HasProp("molAtomMapNumber")):
                 edit_mol.RemoveAtom(atom.GetIdx())
 
             if atom.GetAtomicNum() == 10 and atom.GetIsotope() == 1:
@@ -1336,7 +1349,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(argv) == 0:
-        filename = "molfiles\\structures_for_testing\\ext64.mol"
+        filename = "molfiles\\structures_for_testing\\ext40.mol"
         debug = True
 
     # Generate and print the MarkInChI
