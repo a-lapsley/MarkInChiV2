@@ -182,7 +182,10 @@ class MarkInChI():
         # Generate MarkInChIs for each child R group, sort them, and relabel
         # the pseudoatoms in this molecule accordingly
 
+        
+
         if len(child_rgroups) != 0:
+
             for rlabel in child_rgroups:
                 rgroup = self.rgroups[rlabel]
                 rgroup.add_xe()
@@ -244,7 +247,7 @@ class MarkInChI():
             core_inchi, varattachs, listatoms
         )
 
-        Show(self.mol, indices=True)
+        #Show(self.mol, indices=True)
 
         return final_inchi
 
@@ -277,14 +280,22 @@ class MarkInChI():
         if len(parts) == 2:
             sub_parts = parts[1].split("/")
             isotope_layer = sub_parts[0]
-            if len(sub_parts) == 2:
-                additional_layers = sub_parts[1]
+
+            if len(sub_parts) > 2:
+
+                additional_layers = ""
+                for sub_part in sub_parts[1:len(sub_parts)-1]:
+                    additional_layers += sub_part + "/"
+                additional_layers += sub_parts[len(sub_parts)-1]
+                
             else:
                 additional_layers = ""
         else:
             isotope_layer = ""
             additional_layers = ""
 
+
+        
         # Iterate through the pseudoatoms in the Mol and add the appropriate
         # Markush information.
         # As the atom indices are their canonical indices, these parts will be
@@ -352,7 +363,7 @@ class MarkInChI():
             final_inchi = final_inchi.replace("InChI=1S/", "")
 
         # If final string has Markush information, label it as a MarkInChI
-        if final_inchi.find("<M>") != 0:
+        if final_inchi.find("<M>") != -1:
             final_inchi = final_inchi.replace("InChI=1S/", "MarkInChI=1B/")
 
         return final_inchi
@@ -655,17 +666,20 @@ class MarkInChI():
         # Sort and relabel the rgroups according to the MarkInChI for the group
         # Also return a mapping from the old R label to the new R label
 
-        rgroup_mapping = {}
-        rgroups = dict(sorted(
+        sorted_rgroups = sorted(
             rgroups.items(), key=lambda item: item[1].get_inchi()
-        ))
-        for i in rgroups.keys():
+        )
 
-            rgroup = rgroups[i]
+        rgroup_mapping = {}
+        rgroups = {}
+
+        for i, rgroup in enumerate(sorted_rgroups):
+            rgroup = rgroup[1]
             old_id = rgroup.get_id()
-            new_id = i
+            new_id = i + 1
             rgroup_mapping[old_id] = new_id
             rgroup.set_id(new_id)
+            rgroups[new_id] = rgroup
 
         return rgroups, rgroup_mapping
 
@@ -1371,7 +1385,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(argv) == 0:
-        filename = "molfiles\\test10.mol"
+        filename = "molfiles\\structures_for_testing\\ext70.1.mol"
         debug = True
 
     # Generate and print the MarkInChI
