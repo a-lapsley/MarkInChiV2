@@ -300,7 +300,6 @@ class MarkInChI():
         # Markush information.
         # As the atom indices are their canonical indices, these parts will be
         # added in the correct order
-        Show(self.mol)
         xe_atom_count = 0
         for atom in self.mol.GetAtoms():
             if atom.GetAtomicNum() == 54:
@@ -345,7 +344,6 @@ class MarkInChI():
         for varattach in varattachs:
             markush_strings += varattach.get_final_inchi()
 
-        print(markush_strings)
         # If there is still relevant isotopic information left, format it
         if isotope_layer != "":
             if isotope_layer.strip()[len(isotope_layer)-1] == ",":
