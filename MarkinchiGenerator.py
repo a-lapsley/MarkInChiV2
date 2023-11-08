@@ -247,7 +247,7 @@ class MarkInChI():
             core_inchi, varattachs, listatoms
         )
 
-        #Show(self.mol, indices=True)
+        Show(self.mol, indices=True)
 
         return final_inchi
 
@@ -300,14 +300,20 @@ class MarkInChI():
         # Markush information.
         # As the atom indices are their canonical indices, these parts will be
         # added in the correct order
-
+        Show(self.mol)
         xe_atom_count = 0
+        for atom in self.mol.GetAtoms():
+            if atom.GetAtomicNum() == 54:
+                xe_atom_count += 1
+
         for atom in self.mol.GetAtoms():
             if atom.GetAtomicNum() == 54:
                 isotope = atom.GetIsotope()
                 idx = atom.GetIdx() + 1
-                if isotope == 31:
+                if isotope == 31 and xe_atom_count > 1:
                     markush_strings += "<M></M>"
+                    replace_string = "%i-100" % idx
+                elif isotope == 31 and xe_atom_count == 1:
                     replace_string = "%i-100" % idx
                 else:
                     rlabel = isotope - 31
@@ -329,8 +335,6 @@ class MarkInChI():
                 isotope_layer = isotope_layer.replace(replace_string + ",", "")
                 isotope_layer = isotope_layer.replace(replace_string, "")
 
-                xe_atom_count += 1
-
         # Add Markush layer for the atom lists
 
         for listatom in listatoms:
@@ -341,9 +345,7 @@ class MarkInChI():
         for varattach in varattachs:
             markush_strings += varattach.get_final_inchi()
 
-        if xe_atom_count == 1:
-            markush_strings = markush_strings.replace("<M></M>", "")
-
+        print(markush_strings)
         # If there is still relevant isotopic information left, format it
         if isotope_layer != "":
             if isotope_layer.strip()[len(isotope_layer)-1] == ",":
@@ -1385,7 +1387,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(argv) == 0:
-        filename = "molfiles\\structures_for_testing\\ext70.1.mol"
+        filename = "molfiles\\structures_for_testing\\ext72.mol"
         debug = True
 
     # Generate and print the MarkInChI
