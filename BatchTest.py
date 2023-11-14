@@ -16,7 +16,7 @@ for line in lines:
 
     filename, reference_markinchi = tuple(line.split())
     molfile = os.path.join(molfile_folder, filename)
-    
+    print("Checking %s" % filename)
     markinchi_generator = MarkinchiGenerator()
     markinchi_generator.read_molfile(molfile)
     markinchi = markinchi_generator.generate_markinchi()

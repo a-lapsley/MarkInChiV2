@@ -527,20 +527,33 @@ class MarkInChI():
 
         for i, listatom in enumerate(listatoms):
 
+            mol.UpdatePropertyCache(strict=False)
+            mol = Chem.rdmolops.AddHs(mol)
+
             core_atom = mol.GetAtomWithIdx(listatom["idx"] - 1)
 
-            if core_atom.GetAtomicNum() != 10:
-                core_atom.SetAtomicNum(10)
-                core_atom.SetNumExplicitHs(0)
+            idx_a = None
+            for neighbor in core_atom.GetNeighbors():
+                if neighbor.GetAtomicNum() == 1 and idx_a == None:
+                    neighbor.SetAtomicNum(10)
+                    idx_a = neighbor.GetIdx()
 
-            idx_a = core_atom.GetIdx()
+            if idx_a == None:
+                edit_mol = EditableMol(mol)
+                new_atom = Chem.Atom(10)
+                idx_b = edit_mol.AddAtom(new_atom)
+                edit_mol.AddBond(
+                    core_atom.GetIdx(),
+                    idx_b,
+                    order=Chem.rdchem.BondType.SINGLE
+                )
+                mol = edit_mol.GetMol()
+                idx_a = idx_b
 
+            Show(mol)
             for j in range(len(listatoms) - i - 1):
                 edit_mol = EditableMol(mol)
-                # Isotopically label the extra Ne to track the ones we should
-                # remove
                 new_atom = Chem.Atom(10)
-                new_atom.SetIsotope(1)
                 idx_b = edit_mol.AddAtom(new_atom)
                 edit_mol.AddBond(
                     idx_a,
@@ -549,6 +562,8 @@ class MarkInChI():
                 )
                 mol = edit_mol.GetMol()
                 idx_a = idx_b
+            
+            mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
 
         # Generate the InChI for the molecule to get the AuxInfo, and get the
         # mapping from the original indices to the canonical indices
@@ -556,6 +571,7 @@ class MarkInChI():
         # With this mapping, the element of index i in the list is the index
         # of the atom in the original molecule that gets mapped to the canonical
         # index i
+        
         aux = Chem.MolToInchiAndAuxInfo(mol)[1]
         aux = aux.split("/N:")[1]
         aux = aux.split("/")[0]
@@ -581,7 +597,7 @@ class MarkInChI():
         for atom in mol.GetAtoms():
             atom.SetProp("molAtomMapNumber", str(atom.GetIdx()))
 
-        # Remove any Rn, and any Ne atoms that are on chains
+        # Remove any Rn and Ne
         # Remove any H atoms that aren't labelled (i.e. don't remove if the
         # fragment is just an H atom)
         edit_mol = EditableMol(mol)
@@ -594,7 +610,7 @@ class MarkInChI():
                     not atom.HasProp("molAtomMapNumber")):
                 edit_mol.RemoveAtom(atom.GetIdx())
 
-            if atom.GetAtomicNum() == 10 and atom.GetIsotope() == 1:
+            if atom.GetAtomicNum() == 10:
                 edit_mol.RemoveAtom(atom.GetIdx())
 
         edit_mol.CommitBatchEdit()
@@ -623,19 +639,11 @@ class MarkInChI():
             new_endpts = sorted(new_endpts)
             varattach.set_endpts(new_endpts)
 
-        # Remap the listatoms and turn the atoms back to the correct element
+        # Remap the listatoms
         for listatom in listatoms:
             old_idx = listatom["idx"]
             new_idx = final_map[old_idx - 1]
             listatom["idx"] = new_idx
-            atom = mol.GetAtomWithIdx(new_idx - 1)
-            atomic_nums = listatom["atomic_nums"]
-            if 6 in atomic_nums:
-                atom.SetAtomicNum(6)
-            elif 1 in atomic_nums:
-                atom.SetAtomicNum(atomic_nums[1])
-            else:
-                atom.SetAtomicNum(atomic_nums[0])
 
         return mol, varattachs, listatoms
 
@@ -1019,7 +1027,6 @@ class MarkInChI():
             listatom["sum"] = sum
 
         listatoms = sorted(listatoms, key=lambda item: item["sum"])
-
         return listatoms
 
 
@@ -1326,7 +1333,8 @@ def Show(mols: list | Mol,
          title: str = 'RDKit Molecule',
          stayInFront: bool = True, 
          indices: bool = False, 
-         tidyCoords: bool = True, 
+         tidyCoords: bool = True,
+         overrideDebug: bool = False, 
          **kwargs) -> None:
     """
     Generates a picture of molecule(s) and displays it in a Tkinter window.
@@ -1337,7 +1345,7 @@ def Show(mols: list | Mol,
 
     It is only used for debugging purposes.
     """
-    if debug:
+    if debug | overrideDebug:
         mols = deepcopy(mols)
         import tkinter
 
@@ -1385,7 +1393,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(argv) == 0:
-        filename = "molfiles\\structures_for_testing\\ext72.mol"
+        filename = "molfiles\\test18.mol"
         debug = True
 
     # Generate and print the MarkInChI
