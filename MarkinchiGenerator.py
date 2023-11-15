@@ -18,25 +18,23 @@ debug = False
 class MarkinchiGenerator(object):
 
     def __init__(self) -> None:
-        self.molfile_lines = []  # Lines of v3000 .mol file that will be converted
         self.core = None  # Core of the molecule
         self.rgroups = None  # List of RGroups
 
     def generate_markinchi(self) -> str:
         # Generates the MarkInChI for the core and rgroups
+        if self.core != None:
+            markinchi = MarkInChI(
+                self.core, rgroups=self.rgroups, final=True
+            )
+            return markinchi.get_markinchi()
+        else:
+            return "No or invalid file provided"
 
-        markinchi = MarkInChI(
-            self.core, rgroups=self.rgroups, final=True
-        )
-
-        return markinchi.get_markinchi()
-
-    def read_molfile(self, file_path: str) -> None:
-        # Reads the contents of molfiles to generate:
+    def read_molfile_lines(self, molfile_lines: list) -> None:
+        # Reads the contents of the lines to set:
         # self.core
         # self.rgroups
-
-        molfile_lines = self.lines_from_molfile(file_path)
 
         writing_core = 0
         # status of writing the core molecule string
@@ -121,11 +119,11 @@ class MarkinchiGenerator(object):
         self.core = core_mol
         self.rgroups = rgroups
 
-    def lines_from_molfile(self, file_path: str) -> list | None:
+    def get_from_molfile(self, file_path: str) -> None:
         # Loads V3000 molfile with path 'file_path'
         # Splits into individual lines
-        # Returns lines if file is valid and is loaded succesfully
-        # Returns None otherwise
+        # If file is valid, parses the molfile lines to get the core and the 
+        # R groups
 
         # Check file is a .mol file
         if file_path.endswith(".mol") != True:
@@ -142,11 +140,28 @@ class MarkinchiGenerator(object):
                           )
                     return None
                 else:
-                    return lines
+                    self.read_molfile_lines(lines)
+                    return None
         except:
             print("Unable to open file \'%s\'" % file_path)
             return None
 
+    def get_from_molblock(self, molblock: str) -> list | None:
+
+        # Splits molblock into individual lines
+        # If molblock is valid, parses the molfile lines to get the core and the 
+        # R groups
+
+        lines = molblock.split("\n")
+        new_lines = []
+        for line in lines:
+            line = line + "\n"
+            new_lines.append(line)
+        
+        try:
+            self.read_molfile_lines(new_lines)
+        except:
+            pass
 
 class MarkInChI():
 
@@ -550,7 +565,6 @@ class MarkInChI():
                 mol = edit_mol.GetMol()
                 idx_a = idx_b
 
-            Show(mol)
             for j in range(len(listatoms) - i - 1):
                 edit_mol = EditableMol(mol)
                 new_atom = Chem.Atom(10)
@@ -1399,6 +1413,6 @@ if __name__ == "__main__":
     # Generate and print the MarkInChI
     filedir = os.path.join(os.getcwd(), filename)
     markinchi_generator = MarkinchiGenerator()
-    markinchi_generator.read_molfile(filedir)
+    markinchi_generator.get_from_molfile(filedir)
     markinchi_string = markinchi_generator.generate_markinchi()
     print(markinchi_string)
