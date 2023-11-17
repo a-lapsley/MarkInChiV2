@@ -18,7 +18,7 @@ for line in lines:
     molfile = os.path.join(molfile_folder, filename)
     print("Checking %s" % filename)
     markinchi_generator = MarkinchiGenerator()
-    markinchi_generator.read_molfile(molfile)
+    markinchi_generator.get_from_molfile(molfile)
     markinchi = markinchi_generator.generate_markinchi()
 
     if markinchi != reference_markinchi:

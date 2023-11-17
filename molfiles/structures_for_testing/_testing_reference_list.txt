@@ -106,4 +106,5 @@ ext77.mol       MarkInChI=1B/C6H5Cl/c7-6-4-2-1-3-5-6/h1-5H<M>2H,4H-CH3Zz/c1-2/h1
 ext78.mol       MarkInChI=1B/C6H12/c1-2-4-6-5-3-1/h1-6H2<M>6-C!N!O!S</M><M>1H,2H,3H-CH3Zz/c1-2/h1H3</M>
 ext79.mol       MarkInChI=1B/C5H10O/c1-2-4-6-5-3-1/h1-5H2<M>3-C!N</M><M>5-C!N!O!S</M><M>6-O!S</M><M>1H,2H,4H-CH3Zz/c1-2/h1H3</M>
 ext80.mol       MarkInChI=1B/C5H6O/c1-2-4-6-5-3-1/h1-4H,5H2<M>2-C!N</M><M>4-C!N!O!S</M><M>6-O!S</M><M>1H,3H,5H-CH3Zz/c1-2/h1H3</M>
-ext81.mol        MarkInChI=1B/C6H5Zz/c7-6-4-2-1-3-5-6/h1-5H<M>CH3Zz/c1-2/h1H3!HOZz/c1-2/h1H</M><M>3-C!N</M><M>2H,4H-CH3Zz/c1-2/h1H3</M>
+ext81.mol       MarkInChI=1B/C6H5Zz/c7-6-4-2-1-3-5-6/h1-5H<M>CH3Zz/c1-2/h1H3!HOZz/c1-2/h1H</M><M>3-C!N</M><M>2H,4H-CH3Zz/c1-2/h1H3</M>
+ext82.mol       MarkInChI=1B/C8H13Zz3/c9-2-1-6-3-7(10)5-8(11)4-6/h6-8H,1-5H2<M>ClZz/c1-2!IZz/c1-2</M><M>C3H6Zz2/c4-2-1-3-5/h1-3H2<M></M><M>CH3Zz/c1-2/h1H3!HOZz/c1-2/h1H</M></M><M>CH3Zz/c1-2/h1H3!HOZz/c1-2/h1H</M>

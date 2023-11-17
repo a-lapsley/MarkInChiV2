@@ -203,10 +203,12 @@ class MarkInChI():
 
             for rlabel in child_rgroups:
                 rgroup = self.rgroups[rlabel]
-                rgroup.add_xe()
-                rgroup.generate_component_inchis(self.rgroups)
-                rgroup.sort_components()
-                rgroup.generate_inchi()
+                if not rgroup.is_processed():
+                    rgroup.add_xe()
+                    rgroup.generate_component_inchis(self.rgroups)
+                    rgroup.sort_components()
+                    rgroup.generate_inchi()
+                    rgroup.set_processed(True)
 
             self.rgroups, rgroup_mapping = self.sort_rgroups(self.rgroups)
 
@@ -1054,12 +1056,19 @@ class RGroup():
         self.components = []  # List of each possible component in the R group
         self.inchi = ""  # MarkInChI string for the R group
         self.child_rgroups = []  # R groups directly referenced by this one
+        self.processed = False # To ensure it is only dealt with once
 
     def get_id(self) -> int:
         return self.id
 
     def set_id(self, id: int) -> None:
         self.id = id
+
+    def is_processed(self) -> bool:
+        return self.processed
+    
+    def set_processed(self, processed: bool) -> None:
+        self.processed = processed
 
     def add_component(self, ctab: str, attachments: list) -> None:
         # Adds a component to the R group from a CTAB
@@ -1409,7 +1418,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(argv) == 0:
-        filename = "molfiles\\test18.mol"
+        filename = "molfiles\\structures_for_testing\\ext82.mol"
         debug = True
 
     # Generate and print the MarkInChI
