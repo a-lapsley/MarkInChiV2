@@ -485,7 +485,8 @@ class MarkInChI():
                        mol: Mol, 
                        varattachs: list, 
                        listatoms: list) -> tuple[Mol, list, list]:
-
+        
+        
         # Canonicalizes the indices of the molecule using the InChI algorithm,
         # labelling the variable attachments and listatoms to break any
         # symmetry to ensure the end result is canonical.
@@ -1250,7 +1251,8 @@ class VarAttach():
                 if endpts == self.endpts:
                     bond.ClearProp("_MolFileBondEndPts")
                     for atom in (bond.GetBeginAtom(), bond.GetEndAtom()):
-                        if atom.GetSymbol() == "*":
+                        if (atom.GetAtomicNum() == 0 and
+                            not atom.HasProp("_MolFileRLabel")):
                             atom.SetAtomicNum(54)
                             atom.SetIsotope(31)
 
