@@ -180,6 +180,7 @@ class MarkInChI():
         # Use a deepcopy to stop any changes to the ordering of R groups within
         # this fragment affecting its parent
         self.final = final  # boolean, if False, MarkInChI is nested in another
+        self.child_rgroups = {} 
 
     def get_markinchi(self) -> str:
 
@@ -192,16 +193,15 @@ class MarkInChI():
 
         self.mol, listatoms = self.get_listatoms(self.mol)
 
-        child_rgroups = self.get_child_rgroups(self.mol)
+        child_rgroup_labels = self.get_child_rgroups(self.mol)
 
         # Generate MarkInChIs for each child R group, sort them, and relabel
         # the pseudoatoms in this molecule accordingly
 
         
 
-        if len(child_rgroups) != 0:
-
-            for rlabel in child_rgroups:
+        if len(child_rgroup_labels) != 0:
+            for rlabel in child_rgroup_labels:
                 rgroup = self.rgroups[rlabel]
                 if not rgroup.is_processed():
                     rgroup.add_xe()
@@ -210,12 +210,15 @@ class MarkInChI():
                     rgroup.generate_inchi()
                     rgroup.set_processed(True)
 
-            self.rgroups, rgroup_mapping = self.sort_rgroups(self.rgroups)
+                self.child_rgroups[rlabel] = rgroup
 
+            self.child_rgroups, rgroup_mapping = self.sort_rgroups(
+                self.child_rgroups)
+            
             self.mol = self.relabel_pseudoatoms(
                 self.mol, rgroup_mapping
             )
-
+            
         # Generate MarkInChIs for each Variable Attachment, and sort them
         # alphabetically
         if len(varattachs) != 0:
@@ -263,8 +266,10 @@ class MarkInChI():
         final_inchi = self.finalise_markinchi(
             core_inchi, varattachs, listatoms
         )
+        
+        if debug:
+            Show(self.mol, indices=True)
 
-        Show(self.mol, indices=True)
 
         return final_inchi
 
@@ -333,7 +338,7 @@ class MarkInChI():
                     replace_string = "%i-100" % idx
                 else:
                     rlabel = isotope - 31
-                    string = self.rgroups[rlabel].get_final_inchi()
+                    string = self.child_rgroups[rlabel].get_final_inchi()
                     # If the mol is just an R group, strip the <M> markers as
                     # they are not needed
                     if mol_is_rgroup:
@@ -1359,48 +1364,45 @@ def Show(mols: list | Mol,
          stayInFront: bool = True, 
          indices: bool = False, 
          tidyCoords: bool = True,
-         overrideDebug: bool = False, 
          **kwargs) -> None:
     """
     Generates a picture of molecule(s) and displays it in a Tkinter window.
-    Only if in debug mode, otherwise does nothing. 
 
     This function is a copy of the ShowMol function from the RDKit source code
     that displays multiple Mols in the same Tkinter window.
 
     It is only used for debugging purposes.
     """
-    if debug | overrideDebug:
-        mols = deepcopy(mols)
-        import tkinter
+    mols = deepcopy(mols)
+    import tkinter
 
-        from PIL import ImageTk
+    from PIL import ImageTk
 
-        if type(mols) is list:
+    if type(mols) is list:
 
-            img = MolsToImage(mols, subImgSize, **kwargs)
+        img = MolsToImage(mols, subImgSize, **kwargs)
 
-            tkRoot = tkinter.Tk()
-            tkRoot.title(title)
-            tkPI = ImageTk.PhotoImage(img)
-            tkLabel = tkinter.Label(tkRoot, image=tkPI)
-            tkLabel.place(x=0, y=0, width=img.size[0], height=img.size[1])
-            tkRoot.geometry('%dx%d' % (img.size))
-            tkRoot.lift()
-            if stayInFront:
-                tkRoot.attributes('-topmost', True)
-            tkRoot.mainloop()
-        else:
-            # If specified, label each atom with it's index
-            if indices:
-                for atom in mols.GetAtoms():
-                    atom.SetProp("molAtomMapNumber", str(atom.GetIdx() + 1))
-            # If specified, automatically compute coordinates for atoms to make the
-            # image more legible
+        tkRoot = tkinter.Tk()
+        tkRoot.title(title)
+        tkPI = ImageTk.PhotoImage(img)
+        tkLabel = tkinter.Label(tkRoot, image=tkPI)
+        tkLabel.place(x=0, y=0, width=img.size[0], height=img.size[1])
+        tkRoot.geometry('%dx%d' % (img.size))
+        tkRoot.lift()
+        if stayInFront:
+            tkRoot.attributes('-topmost', True)
+        tkRoot.mainloop()
+    else:
+        # If specified, label each atom with it's index
+        if indices:
+            for atom in mols.GetAtoms():
+                atom.SetProp("molAtomMapNumber", str(atom.GetIdx() + 1))
+        # If specified, automatically compute coordinates for atoms to make the
+        # image more legible
 
-            if tidyCoords:
-                Chem.rdDepictor.Compute2DCoords(mols)
-            ShowMol(mols)
+        if tidyCoords:
+            Chem.rdDepictor.Compute2DCoords(mols)
+        ShowMol(mols)
 
 
 # If this script is called directly
@@ -1418,7 +1420,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(argv) == 0:
-        filename = "molfiles\\structures_for_testing\\ext82.mol"
+        filename = "testfiles\\test7.mol"
         debug = True
 
     # Generate and print the MarkInChI
