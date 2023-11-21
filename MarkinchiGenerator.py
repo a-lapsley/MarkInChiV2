@@ -303,12 +303,11 @@ class MarkInChI():
             sub_parts = parts[1].split("/")
             isotope_layer = sub_parts[0]
 
-            if len(sub_parts) > 2:
+            if len(sub_parts) > 1:
 
                 additional_layers = ""
-                for sub_part in sub_parts[1:len(sub_parts)-1]:
-                    additional_layers += sub_part + "/"
-                additional_layers += sub_parts[len(sub_parts)-1]
+                for sub_part in sub_parts[1:]:
+                    additional_layers += "/" + sub_part
                 
             else:
                 additional_layers = ""
@@ -374,9 +373,7 @@ class MarkInChI():
 
         # Add the isotope, additional, and Markush layers to the final string
         final_inchi = final_inchi + isotope_layer
-        if additional_layers != "":
-            final_inchi += "/"
-            final_inchi += additional_layers
+        final_inchi += additional_layers
         final_inchi += markush_strings
 
         # MarkInChI strings that are sub parts of a greater MarkInChI should be
@@ -1420,7 +1417,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(argv) == 0:
-        filename = "testfiles\\test7.mol"
+        filename = "molfiles\\test25.mol"
         debug = True
 
     # Generate and print the MarkInChI

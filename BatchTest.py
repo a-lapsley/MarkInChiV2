@@ -1,4 +1,5 @@
 from MarkinchiGenerator import MarkinchiGenerator
+from MarkinchiParser import MarkinchiParser
 import os
 
 cwd = os.getcwd()
@@ -10,6 +11,7 @@ with open(reference_file) as file:
     lines = file.readlines()
 
 incorrect_files = []
+incorrect_parses = []
 files_read = 0
 
 for line in lines:
@@ -24,6 +26,18 @@ for line in lines:
     if markinchi != reference_markinchi:
         incorrect_files.append((filename, markinchi, reference_markinchi))
     
+    parser = MarkinchiParser(markinchi)
+    parser.parse_markinchi()
+    molblock = parser.get_molblock()
+
+    markinchi_generator = MarkinchiGenerator()
+    markinchi_generator.get_from_molblock(molblock)
+    reparsed_markinchi = markinchi_generator.generate_markinchi()
+
+    if reparsed_markinchi != markinchi:
+        incorrect_parses.append((filename, reparsed_markinchi, markinchi))
+
+
     files_read += 1
 
 print("-------------------------------")
@@ -37,6 +51,17 @@ else:
         print("Filename: \t\t%s" % incorrect_file[0])
         print("Found MarkInChI: \t%s" % incorrect_file[1])
         print("Reference MarkInChI: \t%s" % incorrect_file[2])
+        print("")
+
+print("-------------------------------")
+if len(incorrect_parses) == 0:
+    print("All MarkInChIs parsed succesfully")
+else:
+    print("The following files were not parsed correctly:")
+    for incorrect_file in incorrect_parses:
+        print("Filename: \t\t%s" % incorrect_file[0])
+        print("Reparsed MarkInChI: \t%s" % incorrect_file[1])
+        print("Original MarkInChI: \t%s" % incorrect_file[2])
         print("")
 
 

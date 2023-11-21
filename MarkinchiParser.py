@@ -4,12 +4,14 @@ from rdkit.Chem.rdchem import EditableMol
 from MarkinchiGenerator import Show
 
 import os
-import sys, getopt
+import sys
+import getopt
 
 from typing import TypeAlias
 
 Mol: TypeAlias = Chem.rdchem.Mol
 
+debug = False
 
 class MarkinchiParser(object):
 
@@ -18,8 +20,9 @@ class MarkinchiParser(object):
 
     def __init__(self, markinchi: str = "") -> None:
         self.markinchi = markinchi
-        self.mol = None
-        self.rgroups = None
+        self.rgroups = []
+        self.rgroup_count = 0
+        self.core_mol = None
 
     def set_markinchi(self, markinchi: str) -> None:
         self.markinchi = markinchi
@@ -27,24 +30,35 @@ class MarkinchiParser(object):
     def parse_markinchi(self) -> tuple[Mol, list]:
         
         # Main script for parsing the MarkInChI
+
         parts = self.markinchi.split("<")
 
         core_mol = self.get_core(parts[0])
-
+        
         markush_strings = self.get_markush_strings(parts[1:])
         string_lists = self.sort_markush_strings(markush_strings)
         rgroup_strings = string_lists[0]
         varattach_strings = string_lists[1]
         listatom_strings = string_lists[2]
+
+        core_mol, rgroup_strings = self.xe_to_rgroups(core_mol, rgroup_strings)
+
         
+        for rgroup_string in rgroup_strings:
+            self.add_rgroup_from_string(rgroup_string)
+
         for varattach_string in varattach_strings:
             core_mol = self.add_varattach(core_mol, varattach_string)
 
-        core_mol = self.xe_to_rgroups(core_mol)
+        for listatom_string in listatom_strings:
+            core_mol = self.add_listatom(core_mol, listatom_string)
+        
+        if debug:
+            Show(core_mol, indices=True)
 
-        rgroups = []
+        self.core_mol = core_mol
 
-        return core_mol, rgroups
+        return self.core_mol, self.rgroups
 
     def get_core(self, markinchi_part: str) -> Mol:
 
@@ -59,23 +73,98 @@ class MarkinchiParser(object):
             inchi = "InChI=1S/" + markinchi_part
 
         inchi = inchi.replace("Zz","Xe")
-        core_mol = Chem.MolFromInchi(inchi)
+
+
+        if inchi.find("Xe") != -1:
+            xe_count = inchi.split("/")[1].split("Xe")[1]
+            if xe_count == "":
+                xe_count = 1
+            else:
+                xe_count = int(xe_count)
+        else:
+            xe_count = 0
+
+        atom_count = len(Chem.MolFromInchi(inchi).GetAtoms())
+
+        inchi_parts = inchi.split("/i")
+        new_inchi = inchi_parts[0]
+
+        if len(inchi_parts) == 1:
+            isotope_layer = "/i"
+            isotope_parts = []
+        else:
+            isotope_parts = inchi_parts[1].split("/")
+            isotope_layer = "/i" + isotope_parts[0]
+
+        if len(isotope_parts) > 1:
+            stereo_layer = ""
+            for part in isotope_parts[1:]:
+                stereo_layer += "/" + part
+        else:
+            stereo_layer = ""
+
+        for i in range(atom_count - xe_count, atom_count):
+            idx = i + 1
+            if i <= 100:
+                isotope_layer += ",%i-%i" % (
+                    idx, 100 - (i - (atom_count - xe_count)) )
+            if i >= 100:
+                isotope_layer += ",%i+%i" % (
+                    i + 1, atom_count - xe_count + idx)
+
+        isotope_layer = isotope_layer.replace("i,", "i")       
+        new_inchi += isotope_layer
+        new_inchi += stereo_layer
+        core_mol = Chem.MolFromInchi(new_inchi)
 
         return core_mol
 
-    def xe_to_rgroups(self, mol: Mol) -> Mol:
+    def xe_to_rgroups(self, mol: Mol, rgroup_strings: list) -> tuple[Mol, list]:
         
         # Converts Xenon atoms to placeholder R group atoms
+        # Removes any empty R group strings from the list, as these represent a
+        # link back to a parent molecule, and replaces these with a pseudoatom
+        # labelled *
 
+        # Find the position of the parent linker in the list, and for all other
+        # R groups add to a new list without the linker
+
+        new_rgroup_strings = []
+        if len(rgroup_strings) == 0:
+            parent_linker_rank = 0
+        else:
+            parent_linker_rank = -1
+            for i, rgroup_string in enumerate(rgroup_strings):
+                if rgroup_string == "":
+                    parent_linker_rank = i
+                else:
+                    new_rgroup_strings.append(rgroup_string)
+
+        # For each Xe, convert to an R group with the appropriate R label, 
+        # except for the linker back to the parent
+        
+        pseudoatoms_counted = 0
         rlabel = 1
         for atom in mol.GetAtoms():
             if atom.GetAtomicNum() == 54:
-                atom.SetAtomicNum(0)
-                atom.SetProp("dummyLabel", "R%i" % rlabel)
-                atom.SetIntProp("_MolFileRLabel", rlabel)
-                atom.SetNumRadicalElectrons(0)
+                if pseudoatoms_counted == parent_linker_rank:
+                    atom.SetAtomicNum(0)
+                    atom.SetIsotope(0)
+                    atom.SetProp("dummyLabel", "*")
+                    atom.SetProp("isParentLinker", "True")
+                    atom.SetNumRadicalElectrons(0)
+                else:
+                    atom.SetAtomicNum(0)
+                    atom.SetIsotope(0)
+                    atom.SetProp("dummyLabel", "R%i" % rlabel)
+                    atom.SetIntProp("_MolFileRLabel", rlabel)
+                    atom.SetNumRadicalElectrons(0)
+                    rlabel += 1
+                pseudoatoms_counted += 1
         
-        return mol
+        self.rgroup_count = len(new_rgroup_strings)
+
+        return mol, new_rgroup_strings
 
     def get_markush_strings(self, parts: list) -> list:
 
@@ -147,40 +236,54 @@ class MarkinchiParser(object):
         
         bond_label_str = bond_label_str[:len(bond_label_str) - 1] + ")"
 
-        # Get the mol from the MarkInChI of the core
-        parser = MarkinchiParser(core_str)
-        varattach_mol, rgroups = parser.parse_markinchi()
+        # Check if Variable attachment is just an R group, and if so deal with
+        # separately
+        depth = 0
+        is_rgroup = False
+        for i in range(len(core_str)):
+            if core_str[i:i+3] == "<M>":
+                depth += 1
+            if core_str[i:i+4] == "</M>":
+                depth -= 1
+            if core_str[i] == "!" and depth == 0:
+                is_rgroup = True
+        
+        if is_rgroup:
+            self.add_rgroup_from_string(core_str)
+            
 
-        # If variable attachment has no child R groups, the only pseudoatom is 
-        # the linker of the variable attachment to the parent
+            varattach_mol = Chem.MolFromSmiles("ClCl")
+            atom1 = varattach_mol.GetAtomWithIdx(0)
+            atom2 = varattach_mol.GetAtomWithIdx(1)
+            atom2.SetProp("dummyLabel","R")
+            atom2.SetAtomicNum(0)
+            atom2.SetIntProp("_MolFileRLabel", 1)
+            atom1.SetAtomicNum(0)
+            atom1.SetProp("isParentLinker", "True")
+            varattach_mol = self.update_rlabels(varattach_mol)
+            self.rgroup_count += 1
 
-        if len(rgroups) == 0:
-            parent_linker_rank = 0
 
-        # Change the appropriate pseudoatom to the linker back to the parent        
-        pseudoatoms_counted = 0
+        else:
 
-        for atom in varattach_mol.GetAtoms():
-            if atom.HasProp("_MolFileRLabel"):
-                if pseudoatoms_counted == parent_linker_rank:
-                    atom.ClearProp("_MolFileRLabel")
-                    atom.SetProp("dummyLabel", "*")
-                    atom.SetProp("isParentLinker", "True")
+            # Get the mol from the MarkInChI of the core
+            parser = MarkinchiParser(core_str)
+            varattach_mol, rgroups = parser.parse_markinchi()
 
-                pseudoatoms_counted += 1
-
+            varattach_mol = self.update_rlabels(varattach_mol)
+            self.rgroups += rgroups
 
         index_offset = len(mol.GetAtoms())
 
         # Combine the core mol with the variable attachment
         mol = Chem.CombineMols(mol, varattach_mol)
-        mol.UpdatePropertyCache()
 
         # Update the indices of any nested variable attachments on the variable
         # attachment we have just added
         for bond in mol.GetBonds():
             if bond.HasProp("_MolFileBondEndPts"):
                 old_endpts = bond.GetProp("_MolFileBondEndPts")
+                
                 old_endpts = old_endpts.split()
 
                 if (
@@ -198,25 +301,204 @@ class MarkinchiParser(object):
                     bond.SetProp("_MolFileBondEndPts", new_endpts)
 
         # Add the endpoint information to the variable attachment bond
+        parent_linker_indices = []
+        nested_linker_indices = []
         for atom in mol.GetAtoms():
-            if atom.HasProp("isParentLinker"):
+            if (atom.HasProp("isParentLinker") and
+                atom.GetIdx() >= index_offset):
                 atom.ClearProp("_MolFileRLabel")
                 atom.SetProp("dummyLabel", "*")
+                nested_linker_indices.append(atom.GetIdx())
                 for bond in atom.GetBonds():
                         bond.SetProp("_MolFileBondType", str(1))
                         bond.SetProp("_MolFileBondEndPts", bond_label_str)
                         bond.SetProp("_MolFileBondAttach", "ANY")
+            if (atom.HasProp("isParentLinker") and
+                atom.GetIdx() < index_offset):
+                parent_linker_indices.append(atom.GetIdx())
 
         molblock = Chem.MolToV3KMolBlock(mol)
         mol = Chem.MolFromMolBlock(molblock)
 
+        for idx in parent_linker_indices:
+            atom = mol.GetAtomWithIdx(idx)
+            atom.SetProp("dummyLabel", "*")
+            atom.SetProp("isParentLinker", "True")
+        
+        for idx in nested_linker_indices:
+            atom = mol.GetAtomWithIdx(idx)
+            atom.SetProp("dummyLabel", "*")
+
         return mol
+
+    def add_rgroup_from_string(self, rgroup_string: str) -> list | None:
+        # Parses a Markinchi substring for an R group to generate a list of Mols
+        # Adds this R group to the list of R groups, as well as the list of any
+        # nested R groups within this one.
+
+        components = []
+        component = ""
+        depth = 0
+        
+        for i in range(len(rgroup_string)):
+
+            if rgroup_string[i] == "!" and depth == 0:
+                components.append(component)
+                component = ""
+            else:
+                component += rgroup_string[i]
+            
+            if rgroup_string[i:i+3] == "<M>":
+                depth += 1
+
+            if rgroup_string[i:i+4] == "</M>":
+                depth -= 1
+
+        components.append(component)
+
+        rgroup = []
+        nested_rgroups = []
+        for component in components:
+            if component != "":
+                parser = MarkinchiParser(component)
+                mol, rgroups = parser.parse_markinchi()
+                mol = self.update_rlabels(mol)
+                rgroups = self.update_nested_rlabels(rgroups)
+                rgroup.append(mol)
+                nested_rgroups += rgroups
+
+        self.rgroups.append(rgroup)
+        self.rgroups += nested_rgroups
+
+    def update_rlabels(self, mol: Mol) -> Mol:
+        
+        # Increase the R label of any nested R groups in this fragment to 
+        # avoid conflicts with the R groups in the parent
+
+        for atom in mol.GetAtoms():
+            if atom.HasProp("_MolFileRLabel"):
+                
+                old_label = atom.GetIntProp("_MolFileRLabel")
+                new_label = old_label + self.rgroup_count
+                atom.SetProp("dummyLabel", "R%i" % new_label)
+                atom.SetIntProp("_MolFileRLabel", new_label)
+
+        return mol
+
+    def update_nested_rlabels(self, rgroups: list) -> list:
+
+        updated_rgroups = []
+
+        for rgroup in rgroups:
+
+            updated_rgroup = []
+            for component in rgroup:
+
+                updated_component = self.update_rlabels(component)
+                updated_rgroup.append(updated_component)
+
+            updated_rgroups.append(updated_rgroup)
+        
+        return updated_rgroups
+
+    def add_listatom(self, mol: Mol, listatom: str) -> Mol:
+
+        # For each listatom, turns the atom in mol into a query atom with a 
+        # list of elements 
+
+        index = int(listatom.split("-")[0])
+        elements = listatom.split("-")[1].split("!")
+
+        molfile_string = "["
+        for element in elements:
+            molfile_string += element
+            molfile_string += ","
+
+        atom_symbol = mol.GetAtomWithIdx(index - 1).GetSymbol()
+        
+        molfile_string = molfile_string[:len(molfile_string) - 1] + "]"
+        replace_string = "M  V30 %i %s" % (index, atom_symbol)
+        new_string = "M  V30 %i %s" % (index, molfile_string)
+
+        parent_linker_indices = []
+        for atom in mol.GetAtoms():
+            if atom.HasProp("isParentLinker"):
+                parent_linker_indices.append(atom.GetIdx())
+
+        molblock = Chem.MolToV3KMolBlock(mol)
+        molblock = molblock.replace(replace_string, new_string)
+        mol = Chem.MolFromMolBlock(molblock)
+
+        for idx in parent_linker_indices:
+            atom = mol.GetAtomWithIdx(idx)
+            atom.SetProp("isParentLinker", "True")
+            atom.SetProp("dummyLabel", "*")
+            atom.ClearProp("_MolFileRLabel")
+
+
+        return mol
+
+    def get_molblock(self) -> str:
+
+        core_block = Chem.MolToV3KMolBlock(self.core_mol)
+        core_block = core_block.replace("\nM  END", "")
+        
+        for i, rgroup in enumerate(self.rgroups):
+            rgroup_block = "M  V30 BEGIN RGROUP %i" % (i + 1)
+            rgroup_block += "\nM  V30 RLOGIC 0 0 \"\"\n"
+            for component in rgroup:
+                for atom in component.GetAtoms():
+                    if atom.HasProp("isParentLinker"):
+                        for neighbor in atom.GetNeighbors():
+                            neighbor.SetProp("isAttachPoint", "True")
+                        
+                        linker_idx = atom.GetIdx()
+                        editmol = EditableMol(component)
+                        editmol.RemoveAtom(linker_idx)
+                        new_component = editmol.GetMol()
+
+                if len(new_component.GetAtoms()) == 0:
+                    new_component = Chem.MolFromSmiles("[H]")
+                    atom = new_component.GetAtomWithIdx(0)
+                    atom.SetProp("isAttachPoint", "True")
+                
+                for atom in new_component.GetAtoms():
+                    if atom.HasProp("isAttachPoint"):
+                        idx = atom.GetIdx() + 1
+                        element = atom.GetSymbol()
+                        
+                if (len(new_component.GetAtoms()) == 1 and
+                    new_component.GetAtomWithIdx(0).GetAtomicNum() == 1):
+                    new_component = Chem.AddHs(new_component)
+      
+                component_block = Chem.MolToV3KMolBlock(new_component)
+                new_component_block = ""
+                lines = component_block.split("\n")
+                lines = lines[:len(lines) - 1]
+                for i, line in enumerate(lines):
+                    if line.find("M  V30 %i %s" % (idx, element)) != -1:
+                        line = line + " ATTCHPT=1"
+                    if i > 3:
+                        if line.find("M  END") == -1:
+                            new_component_block += line + "\n"        
+                
+                rgroup_block += new_component_block
+            
+            rgroup_block += "M  V30 END RGROUP\n"
+            core_block += rgroup_block
+
+        core_block += "M  END"
+
+        return core_block
+
 
 if __name__ == "__main__":
 
     from MarkinchiGenerator import MarkinchiGenerator
 
-    filename = "molfiles\\test10.mol"
+    debug = False
+
+    filename = "molfiles\\structures_for_testing\\ext76.mol"
     filedir = os.path.join(os.getcwd(), filename)
     markinchi_generator = MarkinchiGenerator()
 
@@ -229,12 +511,13 @@ if __name__ == "__main__":
     parser = MarkinchiParser(markinchi)
     mol, rgroups = parser.parse_markinchi()
 
-    
-    molblock = Chem.MolToV3KMolBlock(mol)
-    
+    molblock = parser.get_molblock()
+
+    print(molblock)
+    Show(mol, indices=True)
     markinchi_generator = MarkinchiGenerator()
     markinchi_generator.get_from_molblock(molblock)
     print(markinchi_generator.generate_markinchi())
 
-    Show(mol, overrideDebug=True, indices=True)
+   #Show(mol, overrideDebug=True, indices=True)
     
