@@ -1402,18 +1402,23 @@ if __name__ == "__main__":
 
     # Parse script arguments
     argv = sys.argv[1:]
-    opts, args = getopt.getopt(argv, "i:d")
+
+    opts, args = getopt.getopt(argv, "d")
+    
     for opt, arg in opts:
         if opt == "-d":
             debug = True
-        elif opt == "-i":
-            filename = arg
+
+    if len(args) == 0:
+            filename = "molfiles\\test26.mol"
+            debug = True
+    else:
+        filename = args[0]
+    
 
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
-    if len(argv) == 0:
-        filename = "molfiles\\test26.mol"
-        debug = True
+    
 
     # Generate and print the MarkInChI
     filedir = os.path.join(os.getcwd(), filename)
