@@ -1,15 +1,11 @@
 from rdkit import Chem
-from rdkit.Chem.rdchem import EditableMol
+from rdkit.Chem.rdchem import EditableMol, Mol
 
 from MarkinchiGenerator import Show
 
 import os
 import sys
 import getopt
-
-from typing import TypeAlias
-
-Mol: TypeAlias = Chem.rdchem.Mol
 
 debug = False
 

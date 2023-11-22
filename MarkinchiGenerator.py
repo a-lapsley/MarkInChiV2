@@ -1,14 +1,10 @@
 from rdkit import Chem
-from rdkit.Chem.rdchem import EditableMol, Atom
+from rdkit.Chem.rdchem import EditableMol, Atom, Mol
 from rdkit.Chem.Draw import ShowMol, MolsToImage  # only for debugging
 from copy import deepcopy
 import os
 import sys
 import getopt
-
-from typing import TypeAlias
-
-Mol: TypeAlias = Chem.rdchem.Mol
 
 # Default settings
 debug = False
@@ -146,7 +142,7 @@ class MarkinchiGenerator(object):
             print("Unable to open file \'%s\'" % file_path)
             return None
 
-    def get_from_molblock(self, molblock: str) -> list | None:
+    def get_from_molblock(self, molblock: str) -> None:
 
         # Splits molblock into individual lines
         # If molblock is valid, parses the molfile lines to get the core and the 
@@ -169,11 +165,10 @@ class MarkInChI():
 
     # Core functions
 
-    def __init__(
-            self,
-            mol: Mol,
-            rgroups: dict = {},
-            final: bool = False) -> None:
+    def __init__(self,
+                 mol: Mol,
+                 rgroups: dict = {},
+                 final: bool = False) -> None:
 
         self.mol = mol  # The molecule to get the MarkInChI of
         self.rgroups = deepcopy(rgroups)
@@ -1417,7 +1412,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(argv) == 0:
-        filename = "molfiles\\test25.mol"
+        filename = "molfiles\\test26.mol"
         debug = True
 
     # Generate and print the MarkInChI
