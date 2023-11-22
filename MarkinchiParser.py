@@ -327,7 +327,7 @@ class MarkinchiParser(object):
 
         return mol
 
-    def add_rgroup_from_string(self, rgroup_string: str) -> list | None:
+    def add_rgroup_from_string(self, rgroup_string: str) -> None:
         # Parses a Markinchi substring for an R group to generate a list of Mols
         # Adds this R group to the list of R groups, as well as the list of any
         # nested R groups within this one.

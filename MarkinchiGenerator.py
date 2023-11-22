@@ -1210,6 +1210,7 @@ class VarAttach():
                  mol: Mol, 
                  original_indices: list, 
                  endpts: list) -> None:
+        
         self.mol = mol  # The Mol object for the attachment
         self.original_indices = original_indices  # What the atoms in this Mol
         # were labelled in the parent fragment
@@ -1350,7 +1351,7 @@ def ctab_to_molblock(ctab: str) -> str:
     return molblock
 
 
-def Show(mols: list | Mol, 
+def Show(mols: list, 
          subImgSize: tuple = (200, 200), 
          title: str = 'RDKit Molecule',
          stayInFront: bool = True, 
