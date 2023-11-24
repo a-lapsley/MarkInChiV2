@@ -1,7 +1,7 @@
 from rdkit import Chem
 from rdkit.Chem.rdchem import EditableMol, Atom, Mol
-from rdkit.Chem.Draw import ShowMol, MolsToImage  # only for debugging
 from copy import deepcopy
+from MarkinchiUtils import show, ctab_to_molblock
 import os
 import sys
 import getopt
@@ -263,7 +263,7 @@ class MarkInChI():
         )
         
         if debug:
-            Show(self.mol, indices=True)
+            show(self.mol, indices=True)
 
 
         return final_inchi
@@ -517,6 +517,7 @@ class MarkInChI():
                     for neighbor in core_atom.GetNeighbors():
                         if neighbor.GetAtomicNum() == 1 and idx_a == None:
                             neighbor.SetAtomicNum(86)
+                            neighbor.SetProp("firstInChain", "True")
                             idx_a = neighbor.GetIdx()
 
                     # Extend the chain of Rn atoms according to the priority of
@@ -551,6 +552,7 @@ class MarkInChI():
             for neighbor in core_atom.GetNeighbors():
                 if neighbor.GetAtomicNum() == 1 and idx_a == None:
                     neighbor.SetAtomicNum(10)
+                    neighbor.SetProp("firstInChain", "True")
                     idx_a = neighbor.GetIdx()
 
             if idx_a == None:
@@ -585,7 +587,6 @@ class MarkInChI():
         # With this mapping, the element of index i in the list is the index
         # of the atom in the original molecule that gets mapped to the canonical
         # index i
-        
         aux = Chem.MolToInchiAndAuxInfo(mol)[1]
         aux = aux.split("/N:")[1]
         aux = aux.split("/")[0]
@@ -611,6 +612,9 @@ class MarkInChI():
         for atom in mol.GetAtoms():
             atom.SetProp("molAtomMapNumber", str(atom.GetIdx()))
 
+            if atom.HasProp("firstInChain"):
+                atom.SetAtomicNum(1)
+
         # Remove any Rn and Ne
         # Remove any H atoms that aren't labelled (i.e. don't remove if the
         # fragment is just an H atom)
@@ -629,6 +633,9 @@ class MarkInChI():
 
         edit_mol.CommitBatchEdit()
         mol = edit_mol.GetMol()
+
+        if len(mol.GetAtoms()) > 2:
+            mol = Chem.rdmolops.RemoveHs(mol)
 
         # Get a mapping from the new index from the canonicalization to the
         # index of the atom in the stripped molecule without the Rn atoms
@@ -1043,7 +1050,6 @@ class MarkInChI():
         listatoms = sorted(listatoms, key=lambda item: item["sum"])
         return listatoms
 
-
 class RGroup():
 
     # Class for representing an R group
@@ -1201,7 +1207,6 @@ class RGroup():
         inchi = self.inchi
         return inchi
 
-
 class VarAttach():
 
     # Class for representing a variable attachment
@@ -1340,64 +1345,6 @@ class VarAttach():
 
         return final_inchi
 
-
-def ctab_to_molblock(ctab: str) -> str:
-    # Adds necessary beginning and end to a CTAB to allow RDKit to read it
-    # as a molblock
-    molblock = "\n\n\n  0  0  0     0  0            999 V3000\n"
-    molblock += ctab
-    molblock += "M  END"
-
-    return molblock
-
-
-def Show(mols: list, 
-         subImgSize: tuple = (200, 200), 
-         title: str = 'RDKit Molecule',
-         stayInFront: bool = True, 
-         indices: bool = False, 
-         tidyCoords: bool = True,
-         **kwargs) -> None:
-    """
-    Generates a picture of molecule(s) and displays it in a Tkinter window.
-
-    This function is a copy of the ShowMol function from the RDKit source code
-    that displays multiple Mols in the same Tkinter window.
-
-    It is only used for debugging purposes.
-    """
-    mols = deepcopy(mols)
-    import tkinter
-
-    from PIL import ImageTk
-
-    if type(mols) is list:
-
-        img = MolsToImage(mols, subImgSize, **kwargs)
-
-        tkRoot = tkinter.Tk()
-        tkRoot.title(title)
-        tkPI = ImageTk.PhotoImage(img)
-        tkLabel = tkinter.Label(tkRoot, image=tkPI)
-        tkLabel.place(x=0, y=0, width=img.size[0], height=img.size[1])
-        tkRoot.geometry('%dx%d' % (img.size))
-        tkRoot.lift()
-        if stayInFront:
-            tkRoot.attributes('-topmost', True)
-        tkRoot.mainloop()
-    else:
-        # If specified, label each atom with it's index
-        if indices:
-            for atom in mols.GetAtoms():
-                atom.SetProp("molAtomMapNumber", str(atom.GetIdx() + 1))
-        # If specified, automatically compute coordinates for atoms to make the
-        # image more legible
-
-        if tidyCoords:
-            Chem.rdDepictor.Compute2DCoords(mols)
-        ShowMol(mols)
-
-
 # If this script is called directly
 if __name__ == "__main__":
 
@@ -1411,7 +1358,7 @@ if __name__ == "__main__":
             debug = True
 
     if len(args) == 0:
-            filename = "molfiles\\test26.mol"
+            filename = "molfiles\\structures_for_testing\\ext7.1.mol"
             debug = True
     else:
         filename = args[0]

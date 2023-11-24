@@ -507,11 +507,6 @@ if __name__ == "__main__":
     parser = MarkinchiParser(markinchi)
     mol, rgroups = parser.parse_markinchi()
 
-    show(mol)
-    for i, rgroup in enumerate(rgroups):
-        print(i + 1)
-        for component in rgroup:
-            show(component)
     from MarkinchiUtils import enumerate_markush_mol
 
     mol_list = enumerate_markush_mol(mol, rgroups)
@@ -519,12 +514,12 @@ if __name__ == "__main__":
     for mol in mol_list:
         show(mol)
 
-    #molblock = parser.get_molblock()
+    molblock = parser.get_molblock()
 
     #print(molblock)
     #show(mol, indices=True)
-    #markinchi_generator = MarkinchiGenerator()
-    #markinchi_generator.get_from_molblock(molblock)
-    #print(markinchi_generator.generate_markinchi())
+    markinchi_generator = MarkinchiGenerator()
+    markinchi_generator.get_from_molblock(molblock)
+    print(markinchi_generator.generate_markinchi())
 
     
