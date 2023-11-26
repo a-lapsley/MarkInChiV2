@@ -1357,15 +1357,16 @@ if __name__ == "__main__":
         if opt == "-d":
             debug = True
 
+    # This is just for testing purposes (e.g. when this script is run directly
+    # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\structures_for_testing\\ext7.1.mol"
-            debug = True
+            filename = "molfiles\\test31.mol"
+            debug = False
     else:
         filename = args[0]
     
 
-    # This is just for testing purposes (e.g. when this script is run directly
-    # from an IDE)
+    
     
 
     # Generate and print the MarkInChI

@@ -16,7 +16,7 @@ class MarkinchiParser(object):
     def __init__(self, markinchi: str = "") -> None:
         self.markinchi = markinchi
         self.rgroups = []
-        self.rgroup_count = 0
+        self.nested_rgroups = []
         self.core_mol = None
 
     def set_markinchi(self, markinchi: str) -> None:
@@ -37,13 +37,20 @@ class MarkinchiParser(object):
         listatom_strings = string_lists[2]
 
         core_mol, rgroup_strings = self.xe_to_rgroups(core_mol, rgroup_strings)
-
         
         for rgroup_string in rgroup_strings:
             self.add_rgroup_from_string(rgroup_string)
 
         for varattach_string in varattach_strings:
             core_mol = self.add_varattach(core_mol, varattach_string)
+
+        for rgroup, nested_rgroups in zip(self.rgroups, self.nested_rgroups):
+            for component in rgroup:
+                component = self.update_rlabels(component)
+            
+            nested_rgroups = self.update_nested_rlabels(nested_rgroups)
+
+            self.rgroups += nested_rgroups
 
         for listatom_string in listatom_strings:
             core_mol = self.add_listatom(core_mol, listatom_string)
@@ -79,8 +86,15 @@ class MarkinchiParser(object):
         else:
             xe_count = 0
 
-        atom_count = len(Chem.MolFromInchi(inchi).GetAtoms())
+        stripped_inchi = ""
 
+        for i, part in enumerate(inchi.split("/")):
+            if i < 5:
+                stripped_inchi += part + "/"
+        stripped_inchi = stripped_inchi[:-1]
+
+        atom_count = len(Chem.MolFromInchi(stripped_inchi).GetAtoms())
+        print(inchi)
         inchi_parts = inchi.split("/i")
         new_inchi = inchi_parts[0]
 
@@ -110,8 +124,8 @@ class MarkinchiParser(object):
         isotope_layer = isotope_layer.replace("i,", "i")       
         new_inchi += isotope_layer
         new_inchi += stereo_layer
+        print(new_inchi)
         core_mol = Chem.MolFromInchi(new_inchi)
-
         return core_mol
 
     def xe_to_rgroups(self, mol: Mol, rgroup_strings: list) -> tuple[Mol, list]:
@@ -157,8 +171,6 @@ class MarkinchiParser(object):
                     rlabel += 1
                 pseudoatoms_counted += 1
         
-        self.rgroup_count = len(new_rgroup_strings)
-
         return mol, new_rgroup_strings
 
     def get_markush_strings(self, parts: list) -> list:
@@ -244,7 +256,7 @@ class MarkinchiParser(object):
                 is_rgroup = True
         
         if is_rgroup:
-            self.add_rgroup_from_string(core_str, offset=1)
+            self.add_rgroup_from_string(core_str)
             
             
 
@@ -253,11 +265,10 @@ class MarkinchiParser(object):
             atom2 = varattach_mol.GetAtomWithIdx(1)
             atom2.SetProp("dummyLabel","R")
             atom2.SetAtomicNum(0)
-            atom2.SetIntProp("_MolFileRLabel", 1)
+            atom2.SetIntProp("_MolFileRLabel", 0)
             atom1.SetAtomicNum(0)
             atom1.SetProp("isParentLinker", "True")
             varattach_mol = self.update_rlabels(varattach_mol)
-            self.rgroup_count += 1
 
         else:
 
@@ -326,9 +337,7 @@ class MarkinchiParser(object):
 
         return mol
 
-    def add_rgroup_from_string(self, 
-                               rgroup_string: str, 
-                               offset: int = 0) -> None:
+    def add_rgroup_from_string(self, rgroup_string: str) -> None:
         # Parses a Markinchi substring for an R group to generate a list of Mols
         # Adds this R group to the list of R groups, as well as the list of any
         # nested R groups within this one.
@@ -359,15 +368,13 @@ class MarkinchiParser(object):
             if component != "":
                 parser = MarkinchiParser(component)
                 mol, rgroups = parser.parse_markinchi()
-                mol = self.update_rlabels(mol, offset)
-                rgroups = self.update_nested_rlabels(rgroups, offset)
                 rgroup.append(mol)
                 nested_rgroups += rgroups
 
         self.rgroups.append(rgroup)
-        self.rgroups += nested_rgroups
+        self.nested_rgroups.append(rgroups)
 
-    def update_rlabels(self, mol: Mol, offset: int = 0) -> Mol:
+    def update_rlabels(self, mol: Mol) -> Mol:
         
         # Increase the R label of any nested R groups in this fragment to 
         # avoid conflicts with the R groups in the parent
@@ -376,13 +383,13 @@ class MarkinchiParser(object):
             if atom.HasProp("_MolFileRLabel"):
                 
                 old_label = atom.GetIntProp("_MolFileRLabel")
-                new_label = old_label + self.rgroup_count + offset
+                new_label = old_label + len(self.rgroups)
                 atom.SetProp("dummyLabel", "R%i" % new_label)
                 atom.SetIntProp("_MolFileRLabel", new_label)
 
         return mol
 
-    def update_nested_rlabels(self, rgroups: list, offset: int = 0) -> list:
+    def update_nested_rlabels(self, rgroups: list) -> list:
 
         updated_rgroups = []
 
@@ -391,7 +398,7 @@ class MarkinchiParser(object):
             updated_rgroup = []
             for component in rgroup:
 
-                updated_component = self.update_rlabels(component, offset)
+                updated_component = self.update_rlabels(component)
                 updated_rgroup.append(updated_component)
 
             updated_rgroups.append(updated_rgroup)
@@ -494,7 +501,7 @@ if __name__ == "__main__":
 
     debug = False
 
-    filename = "molfiles\\ext90.mol"
+    filename = "molfiles\\ext92.mol"
     filedir = os.path.join(os.getcwd(), filename)
     markinchi_generator = MarkinchiGenerator()
 
@@ -506,7 +513,12 @@ if __name__ == "__main__":
 
     parser = MarkinchiParser(markinchi)
     mol, rgroups = parser.parse_markinchi()
-
+    show(mol)
+    for i, rgroup in enumerate(rgroups):
+        print("R%i" % (i + 1))
+        for component in rgroup:
+            show(component)
+    
     from MarkinchiUtils import enumerate_markush_mol
 
     mol_list = enumerate_markush_mol(mol, rgroups)

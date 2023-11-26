@@ -211,22 +211,27 @@ def enumerate_rgroups(mol: Mol, rlabel: int, rgroup: list) -> list:
                     # the component
                     # We need to turn the molecule into a 3D conformation and
                     # then recompute the stereochemistry afterwards to ensure 
-                    # it is correctly conserved 
-                    replace_struct = Chem.MolFromSmiles("[Xe]")
-                    mol_copy = Chem.rdmolops.AddHs(mol)
-                    rdDistGeom.EmbedMolecule(mol_copy)
-                    new_mol = Chem.ReplaceSubstructs(
-                        mol_copy,
-                        replace_struct,
-                        component,
-                        replaceAll = True,
-                        replacementConnectionPoint = link_idx
-                    )[0]
+                    # it is correctly conserved
+                    # try:
+                    if True:
+                        replace_struct = Chem.MolFromSmiles("[Xe]")
+                        mol_copy = Chem.rdmolops.AddHs(mol, addCoords=True)
+                        #rdDistGeom.EmbedMolecule(mol_copy, maxAttempts=20)
+                        new_mol = Chem.ReplaceSubstructs(
+                            mol_copy,
+                            replace_struct,
+                            component,
+                            replaceAll = True,
+                            replacementConnectionPoint = link_idx
+                        )[0]
 
-                    Chem.rdmolops.AssignStereochemistryFrom3D(new_mol)
-                    new_mol = Chem.rdmolops.RemoveHs(new_mol)
-                    new_mol.UpdatePropertyCache()
-                    new_list.append(new_mol)
+                        Chem.rdmolops.AssignStereochemistryFrom3D(new_mol)
+                        new_mol = Chem.rdmolops.RemoveHs(new_mol)
+                        new_mol.UpdatePropertyCache()
+                        new_list.append(new_mol)
+                    #except:
+                    else:
+                        print("WARNING: Skipping invalid structure")
     
     # Remove any markers from the atoms in the Mols in the list we have
     # generated to prevent it causing further issues 
