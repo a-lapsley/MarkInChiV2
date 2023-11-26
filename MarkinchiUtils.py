@@ -212,8 +212,7 @@ def enumerate_rgroups(mol: Mol, rlabel: int, rgroup: list) -> list:
                     # We need to turn the molecule into a 3D conformation and
                     # then recompute the stereochemistry afterwards to ensure 
                     # it is correctly conserved
-                    # try:
-                    if True:
+                    try:
                         replace_struct = Chem.MolFromSmiles("[Xe]")
                         mol_copy = Chem.rdmolops.AddHs(mol, addCoords=True)
                         #rdDistGeom.EmbedMolecule(mol_copy, maxAttempts=20)
@@ -229,8 +228,7 @@ def enumerate_rgroups(mol: Mol, rlabel: int, rgroup: list) -> list:
                         new_mol = Chem.rdmolops.RemoveHs(new_mol)
                         new_mol.UpdatePropertyCache()
                         new_list.append(new_mol)
-                    #except:
-                    else:
+                    except:
                         print("WARNING: Skipping invalid structure")
     
     # Remove any markers from the atoms in the Mols in the list we have
