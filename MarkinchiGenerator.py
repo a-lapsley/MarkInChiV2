@@ -545,7 +545,6 @@ class MarkInChI():
 
             mol.UpdatePropertyCache(strict=False)
             mol = Chem.rdmolops.AddHs(mol)
-
             core_atom = mol.GetAtomWithIdx(listatom["idx"] - 1)
 
             idx_a = None
@@ -558,6 +557,7 @@ class MarkInChI():
             if idx_a == None:
                 edit_mol = EditableMol(mol)
                 new_atom = Chem.Atom(10)
+                new_atom.SetProp("firstInChain", "True")
                 idx_b = edit_mol.AddAtom(new_atom)
                 edit_mol.AddBond(
                     core_atom.GetIdx(),
@@ -633,9 +633,8 @@ class MarkInChI():
 
         edit_mol.CommitBatchEdit()
         mol = edit_mol.GetMol()
-
         if len(mol.GetAtoms()) > 2:
-            mol = Chem.rdmolops.RemoveHs(mol)
+            mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
 
         # Get a mapping from the new index from the canonicalization to the
         # index of the atom in the stripped molecule without the Rn atoms
@@ -1360,7 +1359,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\test31.mol"
+            filename = "molfiles\\structures_for_testing\\ext64.mol"
             debug = False
     else:
         filename = args[0]
