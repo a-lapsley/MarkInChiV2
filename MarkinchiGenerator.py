@@ -607,6 +607,7 @@ class MarkInChI():
 
         new_indices = tuple(new_indices)
         mol = Chem.RenumberAtoms(mol, new_indices)
+        
         # Label the atoms to keep track of their new index when we remove the
         # Rn atoms
         for atom in mol.GetAtoms():
@@ -1359,7 +1360,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\structures_for_testing\\ext64.mol"
+            filename = "molfiles\\test36 .mol"
             debug = False
     else:
         filename = args[0]

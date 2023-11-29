@@ -1,5 +1,6 @@
 from rdkit import Chem
 from rdkit.Chem.rdchem import EditableMol, Mol
+from rdkit.Chem.MolStandardize import rdMolStandardize
 from MarkinchiUtils import show
 
 import os
@@ -94,7 +95,6 @@ class MarkinchiParser(object):
         stripped_inchi = stripped_inchi[:-1]
 
         atom_count = len(Chem.MolFromInchi(stripped_inchi).GetAtoms())
-        print(inchi)
         inchi_parts = inchi.split("/i")
         new_inchi = inchi_parts[0]
 
@@ -124,7 +124,6 @@ class MarkinchiParser(object):
         isotope_layer = isotope_layer.replace("i,", "i")       
         new_inchi += isotope_layer
         new_inchi += stereo_layer
-        print(new_inchi)
         core_mol = Chem.MolFromInchi(new_inchi)
         return core_mol
 
@@ -237,10 +236,49 @@ class MarkinchiParser(object):
         
         bond_label_str = "("
         bond_label_str += str(len(endpts_str.split(","))) + " "
+        endpt_indices = []
         for endpt in endpts_str.split(","):
             endpt = endpt.replace("H","")
-            bond_label_str += str(int(endpt)) + " "
+            endpt_indices.append(int(endpt) - 1)
+            bond_label_str += endpt + " "
         
+        mol.UpdatePropertyCache()
+
+        # If there is no H on the endpoint atom, this means we don't have the 
+        # correct tautomer, so we need to find all tautomers for this molecule
+        # and find one that works
+        needs_tautomerising = False
+        for endpt_idx in endpt_indices:
+            atom = mol.GetAtomWithIdx(endpt_idx)
+            if atom.GetTotalNumHs() == 0:
+                needs_tautomerising = True
+        
+        if needs_tautomerising:
+            tautomer_enumerator = rdMolStandardize.TautomerEnumerator()
+            
+            # Isotopically label each atom so they are all unique, and store the
+            # original isotopes so we can restore them afterwards
+            isotopes = []
+            for i, atom in enumerate(mol.GetAtoms()):
+                isotopes.append(atom.GetIsotope())
+                atom.SetIsotope(1000 + i)           
+           
+            # Find all tautomers for the molecule and make a list of those where
+            # the endpoint atom has an H 
+            tautomers = tautomer_enumerator.Enumerate(mol)
+            valid_tautomers = []
+            for tautomer in tautomers:
+                atom = tautomer.GetAtomWithIdx(endpt_idx)
+                if atom.GetTotalNumHs() > 0:
+                    valid_tautomers.append(tautomer)
+            
+            # Choose the first of these (arbitrary, but shouldn't matter)
+            # Restore the isotopic information
+            mol = valid_tautomers[0]
+            for atom, isotope in zip(mol.GetAtoms(), isotopes):
+                atom.SetIsotope(isotope)
+
+
         bond_label_str = bond_label_str[:len(bond_label_str) - 1] + ")"
 
         # Check if Variable attachment is just an R group, and if so deal with
@@ -501,7 +539,7 @@ if __name__ == "__main__":
 
     debug = False
 
-    filename = "molfiles\\ext92.mol"
+    filename = "molfiles\\test35.mol"
     filedir = os.path.join(os.getcwd(), filename)
     markinchi_generator = MarkinchiGenerator()
 
