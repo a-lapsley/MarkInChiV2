@@ -1,0 +1,2 @@
+This folder contains structures containing features that the algorithm is not able to deal with on 19.09.2022. Structures labelled "sym" are giving a sensible MarkInChI, but the MarkInChI is not unique because the molecules are symmetric.
+Some structures are giving a sensible MarkInChI that might be desirable, but it is not possible to convert it to a list of InChIs. (Mainly general groups - Protecting, Halogen, Alkyl, R, ...)

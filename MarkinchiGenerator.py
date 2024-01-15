@@ -1360,7 +1360,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\test36 .mol"
+            filename = "molfiles\\test36.mol"
             debug = False
     else:
         filename = args[0]
