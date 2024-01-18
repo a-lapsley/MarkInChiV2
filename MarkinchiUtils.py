@@ -105,6 +105,16 @@ def enumerate_markush_mol(mol: Mol, rgroups: list) -> list:
         enumerated_list = enumerate_listatoms(mol)
         new_mol_list += enumerated_list
 
+    # Sanitize molecules to remove any invalid molecules
+    new_mol_list = []
+
+    for mol in mol_list:
+        try:
+            Chem.rdmolops.SanitizeMol(mol)
+            new_mol_list.append(mol)
+        except:
+            print("Skipping an invalid molecule")
+    
     mol_list = new_mol_list
 
     return mol_list

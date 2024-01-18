@@ -525,17 +525,19 @@ class MarkInChI():
                     # E.g. if there are 3 groups, highest priority group has a
                     # chain length of 3, so add 2 more Rn (we have already
                     # added the first one in the previous step)
-
                     for j in range(len(varattachs) - i - 1):
-                        edit_mol = EditableMol(mol)
-                        idx_b = edit_mol.AddAtom(Chem.Atom(86))
-                        edit_mol.AddBond(
-                            idx_a,
-                            idx_b,
-                            order=Chem.rdchem.BondType.SINGLE
-                        )
-                        mol = edit_mol.GetMol()
-                        idx_a = idx_b
+                        try:
+                            edit_mol = EditableMol(mol)
+                            idx_b = edit_mol.AddAtom(Chem.Atom(86))
+                            edit_mol.AddBond(
+                                idx_a,
+                                idx_b,
+                                order=Chem.rdchem.BondType.SINGLE
+                            )
+                            mol = edit_mol.GetMol()
+                            idx_a = idx_b
+                        except:
+                            print("Skipping an impossible attachment")
 
                 mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
 
@@ -1360,7 +1362,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\test36.mol"
+            filename = "molfiles\\test39.mol"
             debug = False
     else:
         filename = args[0]

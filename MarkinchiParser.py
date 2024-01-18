@@ -539,7 +539,7 @@ if __name__ == "__main__":
 
     debug = False
 
-    filename = "molfiles\\test35.mol"
+    filename = "molfiles\\test39.mol"
     filedir = os.path.join(os.getcwd(), filename)
     markinchi_generator = MarkinchiGenerator()
 
