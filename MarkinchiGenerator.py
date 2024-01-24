@@ -184,6 +184,7 @@ class MarkInChI():
 
         # Find any variable attachments, atom lists and child R groups on this
         # fragment
+
         self.mol, varattachs = self.get_varattachs(self.mol)
 
         self.mol, listatoms = self.get_listatoms(self.mol)
@@ -497,6 +498,7 @@ class MarkInChI():
         # Iterate through attachments in alphabetical order (they have already
         # been sorted) - this is the order of priority
         for i, varattach in enumerate(varattachs):
+
             for endpt in varattach.get_endpts():
                 mol.UpdatePropertyCache(strict=False)
                 mol = Chem.rdmolops.AddHs(mol)
@@ -526,18 +528,15 @@ class MarkInChI():
                     # chain length of 3, so add 2 more Rn (we have already
                     # added the first one in the previous step)
                     for j in range(len(varattachs) - i - 1):
-                        try:
-                            edit_mol = EditableMol(mol)
-                            idx_b = edit_mol.AddAtom(Chem.Atom(86))
-                            edit_mol.AddBond(
-                                idx_a,
-                                idx_b,
-                                order=Chem.rdchem.BondType.SINGLE
-                            )
-                            mol = edit_mol.GetMol()
-                            idx_a = idx_b
-                        except:
-                            print("Skipping an impossible attachment")
+                        edit_mol = EditableMol(mol)
+                        idx_b = edit_mol.AddAtom(Chem.Atom(86))
+                        edit_mol.AddBond(
+                            idx_a,
+                            idx_b,
+                            order=Chem.rdchem.BondType.SINGLE
+                        )
+                        mol = edit_mol.GetMol()
+                        idx_a = idx_b
 
                 mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
 
@@ -654,7 +653,7 @@ class MarkInChI():
             new_idx = new_indices.index(i)
             final_idx = new_idx_to_stripped_idx_map[new_idx + 1]
             final_map.append(final_idx)
-
+        
         # Remap the varattach endpoints using this map
         for varattach in varattachs:
             endpts = varattach.get_endpts()
@@ -872,7 +871,7 @@ class MarkInChI():
             for b in all_varattachs:
                 indices = b.get_original_indices()
 
-                if all(endpt in indices for endpt in endpts):
+                if all(endpt - 1 in indices for endpt in endpts):
                     a.set_nested()
                     b.add_nested_attachment(a)
 
@@ -882,6 +881,18 @@ class MarkInChI():
             if not v.is_nested():
                 v.reform_structure()
                 non_nested_varattachs.append(v)
+        
+        # Update endpoints of the non-nested varattachs to match the new indices
+        # on the core as these might have been changed
+        for v in non_nested_varattachs:
+            old_endpts = v.get_endpts()
+            new_endpts = []
+            for atom in core.GetAtoms():
+                old_idx = int(atom.GetProp("molAtomMapNumber"))
+                if old_idx in old_endpts:
+                    new_idx = atom.GetIdx() + 1
+                    new_endpts.append(new_idx)
+            v.set_endpts(new_endpts)
 
         return core, non_nested_varattachs
 
@@ -1362,8 +1373,8 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\test39.mol"
-            debug = False
+            filename = "molfiles\\test42.mol"
+            debug = True 
     else:
         filename = args[0]
     

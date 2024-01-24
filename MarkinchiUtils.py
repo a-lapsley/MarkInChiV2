@@ -105,6 +105,8 @@ def enumerate_markush_mol(mol: Mol, rgroups: list) -> list:
         enumerated_list = enumerate_listatoms(mol)
         new_mol_list += enumerated_list
 
+    mol_list = new_mol_list
+
     # Sanitize molecules to remove any invalid molecules
     new_mol_list = []
 
@@ -113,6 +115,7 @@ def enumerate_markush_mol(mol: Mol, rgroups: list) -> list:
             Chem.rdmolops.SanitizeMol(mol)
             new_mol_list.append(mol)
         except:
+            show(mol)
             print("Skipping an invalid molecule")
     
     mol_list = new_mol_list
@@ -127,6 +130,7 @@ def enumerate_listatoms(mol: Mol) -> list:
         if atom.HasQuery():
             #Parse the atom SMARTS to get a list of elements it could be
             smarts = atom.GetSmarts()
+            print(smarts)
             if smarts != "*":
 
                 smarts = smarts.replace("[", "")

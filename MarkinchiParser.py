@@ -520,6 +520,14 @@ class MarkinchiParser(object):
                 for i, line in enumerate(lines):
                     if line.find("M  V30 %i %s" % (idx, element)) != -1:
                         line = line + " ATTCHPT=1"
+                        if line.find("VAL") != -1:
+                            new_line = ""
+                            lineparts = line.split()
+                            for part in lineparts:
+                                if part.find("VAL") == -1:
+                                    new_line += part
+                                    new_line += " "
+                            line = new_line.replace("M ", "M  ")
                     if i > 3:
                         if line.find("M  END") == -1:
                             new_component_block += line + "\n"        
@@ -539,7 +547,7 @@ if __name__ == "__main__":
 
     debug = False
 
-    filename = "molfiles\\test39.mol"
+    filename = "molfiles\\structures_for_testing\\ext5.mol"
     filedir = os.path.join(os.getcwd(), filename)
     markinchi_generator = MarkinchiGenerator()
 
@@ -566,7 +574,7 @@ if __name__ == "__main__":
 
     molblock = parser.get_molblock()
 
-    #print(molblock)
+    print(molblock)
     #show(mol, indices=True)
     markinchi_generator = MarkinchiGenerator()
     markinchi_generator.get_from_molblock(molblock)
