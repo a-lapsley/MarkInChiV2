@@ -1,13 +1,7 @@
 import tkinter as tk
 from tkinter.filedialog import askopenfilename
 
-from rdkit import Chem
-from rdkit.Chem import Draw
-
-from MarkinchiGenerator import MarkinchiGenerator
-from MarkinchiParser import MarkinchiParser
-from BatchTest import BatchTest
-import MarkinchiUtils as MIUtils
+import Markinchi as MI
 
 TITLE_FONT = ("Arial", 25)
 MAIN_FONT = ("Arial", 18)
@@ -30,13 +24,6 @@ class MarkinchiGUI:
             command=self.generate_from_molfile)
         self.btn_generate_from_molfile.pack(padx=10, pady=10)
 
-        self.btn_generate_from_molblock = tk.Button(
-            self.window,
-            text="Generate MarkInChI from Molblock",
-            font=MAIN_FONT,
-            command=self.generate_from_molblock)
-        self.btn_generate_from_molblock.pack(padx=10, pady=10)
-
         self.btn_markinchi_to_molblock = tk.Button(
             self.window,
             text="Generate Molblock from MarkInChI",
@@ -44,6 +31,14 @@ class MarkinchiGUI:
             command=self.markinchi_to_molblock
         )
         self.btn_markinchi_to_molblock.pack(padx=10, pady=10)
+
+        self.btn_molfile_to_inchi_list = tk.Button(
+            self.window,
+            text="List of InChIs from Molfile",
+            font=MAIN_FONT,
+            command=self.molfile_to_inchi_list
+        )
+        self.btn_molfile_to_inchi_list.pack(padx=10, pady=10)
 
         self.btn_markinchi_to_inchi_list = tk.Button(
             self.window,
@@ -66,29 +61,12 @@ class MarkinchiGUI:
     
     def generate_from_molfile(self) -> None:
         filename = askopenfilename()
-        markinchi_generator = MarkinchiGenerator()
-        markinchi_generator.get_from_molfile(filename)
-        markinchi = markinchi_generator.generate_markinchi()
+        output = MI.generate_from_molfile(filename)
         
         popup = tk.Tk()
         popup.title("Generated MarkInChI")
         textbox = tk.Text(popup)
-        textbox.insert(tk.END, markinchi)
-        textbox.pack()
-        popup.mainloop()
-
-    def generate_from_molblock(self) -> None:
-        
-        input_window = TextInputWindow("Enter Molblock:")
-        molblock = input_window.get_input()
-        markinchi_generator = MarkinchiGenerator()
-        markinchi_generator.get_from_molblock(molblock)
-        markinchi = markinchi_generator.generate_markinchi()
-        
-        popup = tk.Tk()
-        popup.title("Generated MarkInChI")
-        textbox = tk.Text(popup)
-        textbox.insert(tk.END, markinchi)
+        textbox.insert(tk.END, output)
         textbox.pack()
         popup.mainloop()
 
@@ -96,9 +74,7 @@ class MarkinchiGUI:
         input_window = TextInputWindow("Enter MarkInChI:")
         markinchi = input_window.get_input()
 
-        markinchi_parser = MarkinchiParser(markinchi)
-        markinchi_parser.parse_markinchi()
-        molblock = markinchi_parser.get_molblock()
+        molblock = MI.molblock_from_markinchi(markinchi)
 
         popup = tk.Tk()
         popup.title("Generated Molblock")
@@ -107,55 +83,42 @@ class MarkinchiGUI:
         textbox.pack()
         popup.mainloop()
 
+    def molfile_to_inchi_list(self) -> None:
+        filename = askopenfilename()
+        output = MI.inchi_list_from_molfile(filename)
+        
+        popup = tk.Tk()
+        popup.title("List of InChIs")
+        textbox = tk.Text(popup)
+        textbox.insert(tk.END, output)
+        textbox.pack()
+        popup.mainloop()
+
     def markinchi_to_inchi_list(self) -> None:
 
         input_window = TextInputWindow("Enter MarkInChI:")
         markinchi = input_window.get_input()
 
-        markinchi_parser = MarkinchiParser(markinchi)
-        mol, rgroups = markinchi_parser.parse_markinchi()
-        mol_list = MIUtils.enumerate_markush_mol(mol, rgroups)
-        inchi_list = MIUtils.inchis_from_mol_list(mol_list)
+        output = MI.inchi_list_from_markinchi(markinchi)
 
         popup = tk.Tk()
         popup.title("List of InChIs")
         textbox = tk.Text(popup)
-        for inchi in inchi_list:
-            textbox.insert(tk.END, inchi + "\n")
+        textbox.insert(tk.END, output)
         textbox.pack()
         popup.mainloop()
 
+        
+
     def batch_test(self) -> None:
-        files_read, incorrect_files, incorrect_parses = BatchTest().test()
+        output = MI.batch_test()
 
         popup = tk.Tk()
         popup.title("Batch Test Results")
-        tb = tk.Text(popup)
-        tb.insert(tk.END, "-------------------------------\n")
-        tb.insert(tk. END, "Read %i .mol files \n" % files_read)
+        textbox = tk.Text(popup)
+        textbox.insert(tk.END, output)
 
-        if len(incorrect_files) == 0:
-            tb.insert(tk.END,"All generated MarkInChIs matched the reference\n")
-        else:
-            tb.insert(tk.END,"The following files caused a mismatch against the reference:\n")
-            for incorrect_file in incorrect_files:
-                tb.insert(tk.END,"Filename: \t\t%s\n" % incorrect_file[0])
-                tb.insert(tk.END,"Found MarkInChI: \t%s\n" % incorrect_file[1])
-                tb.insert(tk.END,"Reference MarkInChI: \t%s\n" % incorrect_file[2])
-                tb.insert(tk.END,"\n")
-
-        tb.insert(tk.END, "-------------------------------\n")
-        if len(incorrect_parses) == 0:
-            tb.insert(tk.END, "All MarkInChIs parsed succesfully\n")
-        else:
-            tb.insert(tk.END, "The following files were not parsed correctly:\n")
-            for incorrect_file in incorrect_parses:
-                tb.insert(tk.END, "Filename: \t\t%s\n" % incorrect_file[0])
-                tb.insert(tk.END, "Reparsed MarkInChI: \t%s\n" % incorrect_file[1])
-                tb.insert(tk.END, "Original MarkInChI: \t%s\n" % incorrect_file[2])
-                tb.insert(tk.END, "\n")
-
-        tb.pack()
+        textbox.pack()
         popup.mainloop()
 
 class TextInputWindow():

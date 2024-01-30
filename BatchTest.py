@@ -1,5 +1,6 @@
 from MarkinchiGenerator import MarkinchiGenerator
 from MarkinchiParser import MarkinchiParser
+import MarkinchiUtils as MUtils
 import os
 
 class BatchTest():
@@ -17,6 +18,7 @@ class BatchTest():
 
         incorrect_files = []
         incorrect_parses = []
+        incorrect_enumerations = []
         files_read = 0
 
         for line in lines:
@@ -32,7 +34,7 @@ class BatchTest():
                 incorrect_files.append((filename, markinchi, reference_markinchi))
             
             parser = MarkinchiParser(markinchi)
-            parser.parse_markinchi()
+            new_mol, new_rgroups = parser.parse_markinchi()
             molblock = parser.get_molblock()
 
             markinchi_generator = MarkinchiGenerator()
@@ -42,13 +44,25 @@ class BatchTest():
             if reparsed_markinchi != markinchi:
                 incorrect_parses.append((filename, reparsed_markinchi, markinchi))
 
+            ref_mol, ref_rgroups = MUtils.parse_molfile(molfile)
+            ref_list = MUtils.enumerate_markush_mol(ref_mol, ref_rgroups)
+            ref_inchi_list = sorted(MUtils.inchis_from_mol_list(ref_list))
+
+            new_list = MUtils.enumerate_markush_mol(new_mol, new_rgroups)
+            new_inchi_list = sorted(MUtils.inchis_from_mol_list(new_list))
+
+            if ref_inchi_list != new_inchi_list:
+                incorrect_enumerations.append((molfile, new_inchi_list, ref_inchi_list))
+
+            
+
 
             files_read += 1
 
-        return files_read, incorrect_files, incorrect_parses
+        return files_read, incorrect_files, incorrect_parses, incorrect_enumerations
 
 if __name__ == "__main__":
-    files_read, incorrect_files, incorrect_parses = BatchTest().test()
+    files_read, incorrect_files, incorrect_parses, incorrect_enumerations = BatchTest().test()
     print("-------------------------------")
     print("Read %i .mol files \n" % files_read)
 
@@ -71,6 +85,17 @@ if __name__ == "__main__":
             print("Filename: \t\t%s" % incorrect_file[0])
             print("Reparsed MarkInChI: \t%s" % incorrect_file[1])
             print("Original MarkInChI: \t%s" % incorrect_file[2])
+            print("")
+
+    print("-------------------------------")
+    if len(incorrect_enumerations) == 0:
+        print("All MarkInChIs enumerated succesfully")
+    else:
+        print("The following files were not enumerated correctly:")
+        for incorrect_file in incorrect_enumerations:
+            print("Filename: \t\t%s" % incorrect_file[0])
+            print("Found list: \t%s" % incorrect_file[1])
+            print("Original list: \t%s" % incorrect_file[2])
             print("")
 
 
