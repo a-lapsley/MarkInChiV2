@@ -48,6 +48,14 @@ class MarkinchiGUI:
         )
         self.btn_markinchi_to_inchi_list.pack(padx=10, pady=10)
 
+        self.btn_test = tk.Button(
+            self.window,
+            text="Test Molfile",
+            font=MAIN_FONT,
+            command=self.test
+        )
+        self.btn_test.pack(padx=10, pady=10)
+
         self.btn_batch_test = tk.Button(
             self.window,
             text="Batch test all test structures",
@@ -108,7 +116,18 @@ class MarkinchiGUI:
         textbox.pack()
         popup.mainloop()
 
+    def test(self) -> None:
+
+        filename = askopenfilename()
+        output = MI.test_file(filename)
         
+        popup = tk.Tk()
+        popup.title("Test results:")
+        textbox = tk.Text(popup)
+        textbox.insert(tk.END, output)
+        textbox.pack()
+        popup.mainloop()
+
 
     def batch_test(self) -> None:
         output = MI.batch_test()

@@ -50,9 +50,12 @@ def inchi_list_from_markinchi(markinchi: str) -> str:
 
     return output
 
-def batch_test() -> str:
+def batch_test(filename: str) -> str:
 
-    test_result = BatchTest().test()
+    if filename == None:
+        filename = "_testing_reference_list.txt"
+
+    test_result = BatchTest().test(filename)
     files_read = test_result[0]
     incorrect_files = test_result[1]
     incorrect_parses = test_result[2]
@@ -90,7 +93,77 @@ def batch_test() -> str:
         output += ("The following MarkInChIs were not enumerated correctly:\n")
         for incorrect_enumeration in incorrect_enumerations:
             output += "Filename: \t\t%s\n" % incorrect_enumeration[0]
+            new_list = incorrect_enumeration[1]
+            ref_list = incorrect_enumeration[2]
+            output += "Length of new list: %i\n" % len(new_list)
+            output += "Length of reference list: %i\n" % len(ref_list)
+            output += "InChIs in the new list but not the reference:\n"
+            for item in new_list:
+                if item not in ref_list:
+                    output += item + "\n"
+            output += "\n"
+            output += "InChIs in the reference list but not the new:\n"
+            for item in ref_list:
+                if item not in new_list:
+                    output += item + "\n"
+            output += "\n"
 
+
+    return output
+
+def test_file(filename: str, print_lists: bool = False) -> str:
+    print(filename)
+    output = ""
+
+    markinchi_generator = MarkinchiGenerator()
+    markinchi_generator.get_from_molfile(filename)
+    markinchi = markinchi_generator.generate_markinchi()
+
+    output += "Generated MarkInChI:\n"
+    output += markinchi +  "\n"
+
+    parser = MarkinchiParser(markinchi)
+    new_mol, new_rgroups = parser.parse_markinchi()
+    molblock = parser.get_molblock()
+
+    new_markinchi_generator = MarkinchiGenerator()
+    new_markinchi_generator.get_from_molblock(molblock)
+    new_markinchi = new_markinchi_generator.generate_markinchi()
+
+    if new_markinchi == markinchi:
+        output += "MarkInChI succesfully parsed and regenerated\n"
+    else:
+        output += "Regenerated MarkInChI did not match the original:\n"
+        output += new_markinchi
+
+    new_list = MIUtils.enumerate_markush_mol(new_mol, new_rgroups)
+    new_inchi_list = list(
+                    set(MIUtils.inchis_from_mol_list(new_list)))
+    new_inchi_list = sorted(new_inchi_list)
+
+    ref_mol, ref_rgroups = MIUtils.parse_molfile(filename)
+    ref_list = MIUtils.enumerate_markush_mol(ref_mol, ref_rgroups)
+    ref_inchi_list = list(set(MIUtils.inchis_from_mol_list(ref_list)))
+    ref_inchi_list = sorted(ref_inchi_list)
+
+    if new_inchi_list == ref_inchi_list:
+        output += "Correctly enumerated MarkInChI\n"
+        if len(new_inchi_list) == 0:
+            output += "WARNING: Generated InChI list contained 0 structures\n"
+    else:
+        output += "MarkInChI was not enumerated correctly\n"
+        output += "Original list contained %i InChIs\n" % len(ref_inchi_list)
+        output += "New list contained %i InChIs\n" % len(new_inchi_list)
+
+        if print_lists:
+            output += "Original list: \n"
+            for inchi in ref_inchi_list:
+                output += inchi + "\n"
+            output += "\nNew list: \n"
+            for inchi in new_inchi_list:
+                output += inchi + "\n"
+
+        
     return output
 
 def help() -> None:
@@ -116,14 +189,16 @@ def find_file(filename: str) -> str:
         pass
 
     try:
-        filename = os.path.join(os.getcwd(), filename)
-        file = open(filename)
+        full_filename = os.path.join(os.getcwd(), filename)
+        file = open(full_filename)
         file.close()
-        return filename
+        return full_filename
     except:
         pass
 
-    return None
+    raise FileNotFoundError("Unable to open %s or %s" % (
+        filename, full_filename
+    ))
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
@@ -134,9 +209,11 @@ if __name__ == "__main__":
         command = "help"
     
     try:
-        argument = argv[1]
+        arguments = argv[1:]
     except:
-        argument = None
+        arguments = [None]
+
+
 
     if command.lower() in ("help"):
 
@@ -144,31 +221,43 @@ if __name__ == "__main__":
 
     if command.lower() in ("generate", "gen"):
 
-        filename = find_file(argument)
+        filename = find_file(arguments[0])
         output = generate_from_molfile(filename)
         print(output)
 
     if command.lower() in ("markinchitomolblock", "mitomolblock"):
 
-        markinchi = argument
+        markinchi = arguments[0]
         output = molblock_from_markinchi(markinchi)
         print(output)
 
     if command.lower() in ("molfiletoinchilist"):
 
-        filename = find_file(argument)
+        filename = find_file(arguments[0])
         output = inchi_list_from_molfile(filename)
         print(output)
 
     if command.lower() in ("markinchitoinchilist", "mitoinchilist"):
 
-        markinchi = argument
+        markinchi = arguments[0]
         output = inchi_list_from_markinchi(markinchi)
         print(output)
 
-    if command.lower() in ("batchtest"):
+    if command.lower() in ("batchtest", ""):
+        
+        filename = arguments[0]
+        output = batch_test(filename)
+        print(output)
 
-        output = batch_test()
+    if command.lower() in ("test", ""):
+
+        filename = find_file(arguments[0])
+        list_inchis = False
+        
+        if "list" in arguments:
+            list_inchis = True
+
+        output = test_file(filename, list_inchis)
         print(output)
 
 

@@ -110,7 +110,10 @@ class MarkinchiGenerator(object):
                     rgroup.add_component(rgroup_ctab, rgroup_attachments)
 
         core_molblock = ctab_to_molblock(core_ctab)
-        core_mol = Chem.MolFromMolBlock(core_molblock)
+        core_mol = Chem.MolFromMolBlock(core_molblock, sanitize=False)
+        Chem.rdmolops.SanitizeMol(core_mol)
+        Chem.rdmolops.AssignStereochemistry(core_mol)
+
 
         self.core = core_mol
         self.rgroups = rgroups
@@ -194,8 +197,6 @@ class MarkInChI():
         # Generate MarkInChIs for each child R group, sort them, and relabel
         # the pseudoatoms in this molecule accordingly
 
-        
-
         if len(child_rgroup_labels) != 0:
             for rlabel in child_rgroup_labels:
                 rgroup = self.rgroups[rlabel]
@@ -214,7 +215,7 @@ class MarkInChI():
             self.mol = self.relabel_pseudoatoms(
                 self.mol, rgroup_mapping
             )
-            
+
         # Generate MarkInChIs for each Variable Attachment, and sort them
         # alphabetically
         if len(varattachs) != 0:
@@ -227,23 +228,37 @@ class MarkInChI():
         # for detailed explanation)
         listatoms = self.sort_listatoms_by_atomic_nums(listatoms)
 
-        # Convert pseudoatoms to Xe and isotopically label according to R label
-        self.mol = self.rgroup_pseudoatoms_to_xe(self.mol)
+        # Convert pseudoatoms to Xe, and generate a map from the pseudoatom
+        # index to it's rlabel
+
+        
+        self.mol, index_to_rlabel_map = self.rgroup_pseudoatoms_to_xe(self.mol)
 
         # Canonicalize the molecule indices according to the InChI algorithm
         # This is to ensure any variable attachments and listatoms with multiple
         # equivalent indices are canonicalized
         # Represent variable attachment points with chains of Rn atoms
         # Represent list atoms with chains of Ne atoms
-        self.mol, varattachs, listatoms = self.canonize_inchi(
-            self.mol, varattachs, listatoms
+        # Also adds chains of additional Xe atoms to canonicalize R groups
+
+        canonicalization_result = self.canonize_inchi(
+            self.mol, varattachs, listatoms, index_to_rlabel_map
         )
 
+        self.mol = canonicalization_result[0]
+        varattachs = canonicalization_result[1]
+        listatoms = canonicalization_result[2]
+        index_to_rlabel_map = canonicalization_result[3]
+        markush_stereo = canonicalization_result[4]
         # Canonicalise the atom indices of self.mol by converting to InChI and
         # back again
 
         core_inchi, aux = Chem.MolToInchiAndAuxInfo(self.mol)
         self.mol = Chem.MolFromInchi(core_inchi)
+        
+        core_stereo = self.extract_stereo_info(core_inchi)
+
+
 
         # Re-map any indices to the new canonical labels
         mapping = self.get_canonical_map(aux)
@@ -251,67 +266,62 @@ class MarkInChI():
         listatoms = self.remap_listatoms(listatoms, mapping)
         listatoms = self.get_atom_symbols(listatoms)
 
+        index_to_rlabel_map = self.remap_rlabel_map(
+            index_to_rlabel_map, mapping
+            )
+        
+        markush_stereo = self.remap_stereo_layers(markush_stereo, mapping)
+
         # Deal with variable attachments
         for varattach in varattachs:
             varattach.generate_inchi(self.rgroups)
             varattach.remap_endpts(mapping)
-
+        
         varattachs = self.sort_varattachs(varattachs)
+
+
 
         # Construct the final markinchi string
         final_inchi = self.finalise_markinchi(
-            core_inchi, varattachs, listatoms
+            core_inchi, varattachs, listatoms, index_to_rlabel_map, core_stereo,
+            markush_stereo
         )
-        
+
         if debug:
             show(self.mol, indices=True)
 
-
+        
         return final_inchi
 
     def finalise_markinchi(self,
                            inchi: str,
                            varattachs: list,
-                           listatoms: list) -> str:
+                           listatoms: list,
+                           index_to_rlabel_map: dict,
+                           core_stereo: dict,
+                           markush_stereo: dict) -> str:
         # This function constructs the final MarkInChI, making sure everything
         # is formatted correctly etc.
 
-        core_inchi = inchi.replace("Xe", "Zz")
+        final_inchi = inchi.replace("Xe", "Zz")
         # If the fragment is just a single R group, we don't need the core bit
         # (But only if it's not final, otherwise it's not a proper MarkInChI)
-        # Also check the Xe doesn't have a mass of 31, which would mean it is a
+        # Also check there is no R label, which would mean it is a
         # linker to parent, and so the fragment is an H atom, so we do need the
         # core
         mol_is_rgroup = False
         if len(self.mol.GetAtoms()) == 1 and not self.final:
-            if self.mol.GetAtomWithIdx(0).GetAtomicNum() == 54:
-                if self.mol.GetAtomWithIdx(0).GetIsotope() != 31:
-                    core_inchi = ""
-                    mol_is_rgroup = True
+            if len(index_to_rlabel_map) != 0:
+                final_inchi = ""
+                mol_is_rgroup = True
 
-        # Obtain the InChI string before the isotope layer, the isotope layer
-        # itself, and any additional layers after the isotope layer
-        parts = core_inchi.split("/i")
-        final_inchi = parts[0]
-        markush_strings = ""
+        markush_strings = "" 
 
-        if len(parts) == 2:
-            sub_parts = parts[1].split("/")
-            isotope_layer = sub_parts[0]
+        # Generate the Markush stereo layer if relevant
 
-            if len(sub_parts) > 1:
-
-                additional_layers = ""
-                for sub_part in sub_parts[1:]:
-                    additional_layers += "/" + sub_part
-                
-            else:
-                additional_layers = ""
-        else:
-            isotope_layer = ""
-            additional_layers = ""
-
-
+        markush_strings += self.generate_markush_stereo(
+            core_stereo, markush_stereo
+        ) 
         
         # Iterate through the pseudoatoms in the Mol and add the appropriate
         # Markush information.
@@ -324,15 +334,16 @@ class MarkInChI():
 
         for atom in self.mol.GetAtoms():
             if atom.GetAtomicNum() == 54:
-                isotope = atom.GetIsotope()
-                idx = atom.GetIdx() + 1
-                if isotope == 31 and xe_atom_count > 1:
-                    markush_strings += "<M></M>"
-                    replace_string = "%i-100" % idx
-                elif isotope == 31 and xe_atom_count == 1:
-                    replace_string = "%i-100" % idx
+                
+                idx = atom.GetIdx()
+                if idx in index_to_rlabel_map.keys():
+                    rlabel = index_to_rlabel_map[idx]
                 else:
-                    rlabel = isotope - 31
+                    rlabel = None
+
+                if rlabel == None and xe_atom_count > 1:
+                    markush_strings += "<M></M>"
+                elif rlabel != None:
                     string = self.child_rgroups[rlabel].get_final_inchi()
                     # If the mol is just an R group, strip the <M> markers as
                     # they are not needed
@@ -340,16 +351,6 @@ class MarkInChI():
                         string = string[3:]
                         string = string[:len(string)-4]
                     markush_strings += string
-                    replace_string = str(idx)
-                    if isotope < 131:
-                        replace_string += str(isotope-131)
-                    elif isotope > 131:
-                        replace_string += "+"
-                        replace_string += str(isotope-131)
-                # This seemed like the simplest way to cover the cases that the
-                # isotope is in the middle of the list or at the end
-                isotope_layer = isotope_layer.replace(replace_string + ",", "")
-                isotope_layer = isotope_layer.replace(replace_string, "")
 
         # Add Markush layer for the atom lists
 
@@ -361,15 +362,7 @@ class MarkInChI():
         for varattach in varattachs:
             markush_strings += varattach.get_final_inchi()
 
-        # If there is still relevant isotopic information left, format it
-        if isotope_layer != "":
-            if isotope_layer.strip()[len(isotope_layer)-1] == ",":
-                isotope_layer = isotope_layer[:len(isotope_layer)-1]
-            isotope_layer = "/i" + isotope_layer
-
-        # Add the isotope, additional, and Markush layers to the final string
-        final_inchi = final_inchi + isotope_layer
-        final_inchi += additional_layers
+        # Add the Markush layers to the final string
         final_inchi += markush_strings
 
         # MarkInChI strings that are sub parts of a greater MarkInChI should be
@@ -484,12 +477,14 @@ class MarkInChI():
     def canonize_inchi(self, 
                        mol: Mol, 
                        varattachs: list, 
-                       listatoms: list) -> tuple[Mol, list, list]:
-        
+                       listatoms: list,
+                       index_to_rlabel_map: dict
+                       ) -> tuple[Mol, list, list, dict]:
         
         # Canonicalizes the indices of the molecule using the InChI algorithm,
         # labelling the variable attachments and listatoms to break any
         # symmetry to ensure the end result is canonical.
+        # Also canonicalizes R groups by adding chains of Xe atoms
 
         # For each variable attachment, add a chain of Rn atoms to each endpoint
         # The chain length corresponds to the highest priority variable
@@ -497,6 +492,9 @@ class MarkInChI():
         #
         # Iterate through attachments in alphabetical order (they have already
         # been sorted) - this is the order of priority
+
+        
+
         for i, varattach in enumerate(varattachs):
 
             for endpt in varattach.get_endpts():
@@ -582,18 +580,70 @@ class MarkInChI():
             
             mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
 
+        # Mark all existing Xe atoms to prevent deletion later
+        
+        for atom in mol.GetAtoms():
+            if atom.GetAtomicNum() == 54:
+                atom.SetProp("firstInChain", "True")
+
+
+        # Add chains of Xe atoms to each R group Xe pseudoatom
+            
+        for idx in index_to_rlabel_map.keys():
+
+            mol.UpdatePropertyCache(strict=False)
+
+            core_atom = mol.GetAtomWithIdx(idx)
+            rlabel = index_to_rlabel_map[idx]
+
+            idx_a = idx
+            for j in range(len(self.rgroups) + 1 - rlabel):
+                edit_mol = EditableMol(mol)
+                new_atom = Chem.Atom(54)
+                idx_b = edit_mol.AddAtom(new_atom)
+                edit_mol.AddBond(
+                    idx_a,
+                    idx_b,
+                    order=Chem.rdchem.BondType.SINGLE
+                )
+                mol = edit_mol.GetMol()
+                idx_a = idx_b
+            
+        
         # Generate the InChI for the molecule to get the AuxInfo, and get the
         # mapping from the original indices to the canonical indices
         #
         # With this mapping, the element of index i in the list is the index
         # of the atom in the original molecule that gets mapped to the canonical
         # index i
-        aux = Chem.MolToInchiAndAuxInfo(mol)[1]
+        
+        mol.UpdatePropertyCache(strict=False)
+        Chem.SetBondStereoFromDirections(mol)
+        mol = Chem.rdmolops.AddHs(mol, addCoords=True)
+        
+        mol.UpdatePropertyCache(strict=False)
+        
+
+        inchi, aux = Chem.MolToInchiAndAuxInfo(mol)
+
+        mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
+        # Extract the information in the stereochemical layers from 
+        stereo_layers = self.extract_stereo_info(inchi)
+        
         aux = aux.split("/N:")[1]
         aux = aux.split("/")[0]
+
+
         new_indices = []
         for idx in aux.split(","):
             new_indices.append(int(idx)-1)
+
+        inchi_to_old_mapping = {}
+        for inchi_index, old_index in enumerate(new_indices):
+            inchi_to_old_mapping[inchi_index + 1] = old_index + 1
+        
+        stereo_layers = self.remap_stereo_layers(
+            stereo_layers, inchi_to_old_mapping)
 
         # Reverse the list - arbitrary but means the highest priority group now
         # has the lowest index
@@ -603,23 +653,36 @@ class MarkInChI():
         elif new_indices == [1]:
             # Case of a single H atom
             new_indices.append(0)
+            edit_mol = EditableMol(mol)
+            h_atom = Chem.Atom(1)
+            edit_mol.AddAtom(h_atom)
+            edit_mol.AddBond(
+                0,
+                1,
+                order=Chem.rdchem.BondType.SINGLE
+            )
+            mol = edit_mol.GetMol()
         else:
             new_indices = new_indices[::-1]
 
         new_indices = tuple(new_indices)
         mol = Chem.RenumberAtoms(mol, new_indices)
         
+
         # Label the atoms to keep track of their new index when we remove the
         # Rn atoms
         for atom in mol.GetAtoms():
             atom.SetProp("molAtomMapNumber", str(atom.GetIdx()))
 
             if atom.HasProp("firstInChain"):
-                atom.SetAtomicNum(1)
+                if atom.GetAtomicNum() in (10, 86):
+                    atom.SetAtomicNum(1)
 
         # Remove any Rn and Ne
         # Remove any H atoms that aren't labelled (i.e. don't remove if the
         # fragment is just an H atom)
+        # Remove any unmarked Xe atoms
+
         edit_mol = EditableMol(mol)
         edit_mol.BeginBatchEdit()
         for atom in mol.GetAtoms():
@@ -633,8 +696,12 @@ class MarkInChI():
             if atom.GetAtomicNum() == 10:
                 edit_mol.RemoveAtom(atom.GetIdx())
 
+            if (atom.GetAtomicNum() == 54 and not atom.HasProp("firstInChain")):
+                edit_mol.RemoveAtom(atom.GetIdx())
+
         edit_mol.CommitBatchEdit()
         mol = edit_mol.GetMol()
+
         if len(mol.GetAtoms()) > 2:
             mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
 
@@ -667,7 +734,23 @@ class MarkInChI():
             new_idx = final_map[old_idx - 1]
             listatom["idx"] = new_idx
 
-        return mol, varattachs, listatoms
+        # Remap the R group labels
+        new_index_to_rlabel_map = {}
+        for old_idx in index_to_rlabel_map.keys():
+            new_idx = final_map[old_idx]
+            rlabel = index_to_rlabel_map[old_idx]
+            new_index_to_rlabel_map[new_idx] = rlabel
+        
+        # Remap the stereo layer
+        mapping = {}
+        for old_idx, new_idx in enumerate(final_map):
+            mapping[old_idx + 1] = new_idx
+
+        stereo_layers = self.remap_stereo_layers(stereo_layers, mapping)
+
+        index_to_rlabel_map = new_index_to_rlabel_map
+
+        return mol, varattachs, listatoms, index_to_rlabel_map, stereo_layers
 
     def get_canonical_map(self, auxinfo: str) -> dict:
         # Generates a map between the original atom indices and the canonical
@@ -689,7 +772,138 @@ class MarkInChI():
             canonical_map[original_label] = new_label
 
         return canonical_map
+    
+    # Stereochemistry handling
 
+    def extract_stereo_info(self, inchi: str) -> dict:
+        # Extracts the stereochemical information from an InChI string and
+        # returns it as a dictionary that can be worked with more easily
+
+        stereo_layers = {"main":{}, "isotope":{}}
+        layer = "main"
+        for part in inchi.split("/"):
+                
+                if part[0] == "t":
+                    stereo_layers[layer]["t"] = {}
+                    for centre in part[1:].split(","):
+                        if centre.find("?") == -1:
+                            idx = int(centre.replace("+", "").replace("-", ""))
+                            config = centre[-1]
+                            stereo_layers[layer]["t"][idx] = config
+
+                if part[0] == "b":
+                    stereo_layers[layer]["b"] = {}
+                    for bond in part[1:].split(","):
+                        idx_a = int(bond[:-1].split("-")[0])
+                        idx_b = int(bond[:-1].split("-")[1])
+                        bond_label = (idx_a, idx_b)
+                        config = bond[-1]
+                        stereo_layers[layer]["b"][bond_label] = config
+
+                if part[0] == "m":
+                    stereo_layers[layer]["m"] = part[1:]
+                if part[0] == "s":
+                    stereo_layers[layer]["s"] = part[1:]
+                if part[0] == "i":
+                    layer = "isotope"
+
+        return stereo_layers
+
+    def remap_stereo_layers(self, stereo_layers: dict, mapping: object) -> dict:
+
+        # Remap atom indices in the stereo layer dictionary according to the 
+        # mapping
+
+        for layer in ("main", "isotope"):
+            # Remap tetrahedral stereochem
+            if "t" in stereo_layers[layer].keys():
+                old_tlayer = stereo_layers[layer]["t"]
+                new_tlayer = {}
+
+                for old_idx in old_tlayer.keys():
+                    new_idx = mapping[old_idx]
+                    config = old_tlayer[old_idx]
+                    new_tlayer[new_idx] = config
+                stereo_layers[layer]["t"] = new_tlayer
+
+            # Remap double bond geometries
+            if "b" in stereo_layers[layer].keys():
+                old_blayer = stereo_layers[layer]["b"]
+                new_blayer = {}
+                for old_bond in old_blayer.keys():
+                    old_idxa = old_bond[0]
+                    old_idxb = old_bond[1]
+                    new_idxa = mapping[old_idxa]
+                    new_idxb = mapping[old_idxb] 
+                    new_label = (new_idxa, new_idxb)
+                    config = old_blayer[old_bond]
+                    new_blayer[new_label] = config
+
+                stereo_layers[layer]["b"] = new_blayer
+
+        return stereo_layers
+    
+    def generate_markush_stereo(
+            self, 
+            core: dict, 
+            markush: dict) -> dict:
+        
+        stereo_layer = ""
+
+        for layer in ("main", "isotope"):
+            
+            for flag in ("b", "t"):
+                needs_layer = False
+                if flag in markush[layer].keys():
+                    if flag in core[layer].keys():
+                        if markush[layer][flag] == core[layer][flag]:
+                            needs_layer = False
+                        elif markush[layer][flag] == {}:
+                            needs_layer = False
+                        else:
+                            needs_layer = True
+                    else:
+                        needs_layer = True
+                else:
+                    needs_layer = False
+
+                if needs_layer:
+                    if layer == "isotope":
+                        stereo_layer += "/i"
+
+                    stereo_layer += "/%s" % flag
+                    for idx in sorted(markush[layer][flag].keys()):
+                        if flag == "b":
+                            stereo_layer += str(idx[0]) + "-" + str(idx[1])
+                        if flag == "t":
+                            stereo_layer += str(idx)
+                        stereo_layer += markush[layer][flag][idx]
+                        stereo_layer += ","
+                    stereo_layer = stereo_layer[:-1]    
+
+
+
+            for flag in ("m", "s"):
+                if flag in markush[layer].keys():
+                    if "m" in core[layer].keys():
+                        if markush[layer][flag] == core[layer][flag]:
+                            needs_layer = False
+                        else:
+                            needs_layer = True
+                    else:
+                        needs_layer = True
+                else:
+                    needs_layer = False
+
+                if needs_layer:
+                    stereo_layer += "/%s" % flag
+                    stereo_layer += markush[layer][flag]
+
+        if stereo_layer != "":
+            stereo_layer = "<M>" + stereo_layer[1:] + "</M>"
+
+        return stereo_layer
+        
     # R Group handling
 
     def sort_rgroups(self, rgroups: dict) -> tuple[dict, dict]:
@@ -737,28 +951,22 @@ class MarkInChI():
 
         return mol
 
-    def rgroup_pseudoatoms_to_xe(self, mol: Mol) -> Mol:
+    def rgroup_pseudoatoms_to_xe(self, mol: Mol) -> tuple[Mol, dict]:
         """
         Changes the Rn pseudoatoms in mol to Xe atoms
 
-        Isotopically labels the Xe atoms according to the R group number
-        For Rn, Z = 31 + n
-
-        Xe standard isotope weight: 131
-        InChI supports isotopes from -100 to +100 relative to the 
-        standard isotope weight, ie. 31 to 231
-
-        Xe-31 we reserve for representing links back to parent fragments.
-
-        So Xe-32 is R1, Xe-33 is R2, etc.
+        Generate a mapping of these atoms' indices to their R group label.
         """
+        index_to_rlabel_map = {}
         for atom in mol.GetAtoms():
             if atom.HasProp("_MolFileRLabel"):
                 rlabel = atom.GetIntProp("_MolFileRLabel")
                 atom.SetAtomicNum(54)  # Change atom to Xe
-                atom.SetIsotope(31+rlabel)
+                atom.SetIsotope(0)
+                idx = atom.GetIdx()
+                index_to_rlabel_map[idx] = rlabel                
 
-        return mol
+        return mol, index_to_rlabel_map
 
     def remove_pseudoatom_isotopes(self, 
                                    inchi: str, 
@@ -794,6 +1002,16 @@ class MarkInChI():
 
         return new_inchi
 
+    def remap_rlabel_map(self, rlabel_map: dict, mapping: dict) -> dict:
+        # Remap the map from atom index to R label according to the new mapping
+        new_rlabel_map = {}
+        for old_idx in rlabel_map.keys():
+            rlabel = rlabel_map[old_idx]
+            new_idx = mapping[old_idx] - 1
+            new_rlabel_map[new_idx] = rlabel
+        
+        return new_rlabel_map
+    
     # Variable attachment handling
 
     def get_varattachs(self, mol: Mol) -> tuple[Mol, list]:
@@ -1092,7 +1310,10 @@ class RGroup():
         # multiply attached R groups
 
         molblock = ctab_to_molblock(ctab)
-        mol = Chem.MolFromMolBlock(molblock)
+        mol = Chem.MolFromMolBlock(molblock, sanitize=False)
+        Chem.rdmolops.SanitizeMol(mol)
+        Chem.rdmolops.AssignStereochemistry(mol)
+        
         component = {}
         component["mol"] = mol
         component["attachments"] = attachments
@@ -1106,6 +1327,8 @@ class RGroup():
         for component in self.components:
             mol = component["mol"]
             attachments = component["attachments"]
+            mol.UpdatePropertyCache()
+            mol = Chem.rdmolops.AddHs(mol)
             atoms = mol.GetAtoms()
             # Single atom R groups are treated differently
             for atom in atoms:
@@ -1114,16 +1337,42 @@ class RGroup():
                 n = atom_idx + 1
                 for attachment in attachments:
                     if attachment[1] == n:
-                        edit_mol = EditableMol(mol)
-                        xe_atom = Atom(54)
-                        xe_atom.SetIsotope(31)
-                        xe_idx = edit_mol.AddAtom(xe_atom)
-                        edit_mol.AddBond(
-                            atom_idx,
-                            xe_idx,
-                            order=Chem.rdchem.BondType.SINGLE
+                        linker_added = False
+                        for neighbor in atom.GetNeighbors():
+                            if (neighbor.GetAtomicNum() == 1 and not 
+                                linker_added):
+                                neighbor.SetAtomicNum(54)
+                                linker_added = True
+
+
+
+                        if not linker_added:
+                            raise Exception("Invalid R group connection point")
+                        
+                        atom.SetChiralTag(
+                            Chem.rdchem.ChiralType.CHI_UNSPECIFIED
                         )
-                        mol = edit_mol.GetMol()
+
+                        mol = Chem.rdmolops.RemoveHs(mol)
+                        
+
+                        # Set the geometry of all bonds to the attachment point
+                        # to be undefined
+                        # We need to do this as the mol file format is ambiguous
+                        # with its definition of R group connections
+                        new_atom = mol.GetAtomWithIdx(atom_idx)
+                        for bond in new_atom.GetBonds():
+                            if(
+                                bond.GetBondType() == 
+                                Chem.rdchem.BondType.DOUBLE
+                                ):
+                                
+                                bond.SetStereo(
+                                    Chem.rdchem.BondStereo.STEREOANY
+                                )
+                        
+                        mol.UpdatePropertyCache()
+
                 component["mol"] = mol
 
     def generate_component_inchis(self, rgroups: dict) -> None:
@@ -1279,7 +1528,6 @@ class VarAttach():
                         if (atom.GetAtomicNum() == 0 and
                             not atom.HasProp("_MolFileRLabel")):
                             atom.SetAtomicNum(54)
-                            atom.SetIsotope(31)
 
                 else:
                     new_endpts = []
@@ -1368,13 +1616,13 @@ if __name__ == "__main__":
     
     for opt, arg in opts:
         if opt == "-d":
-            debug = True
+            debug = False
 
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\test42.mol"
-            debug = True 
+            filename = "molfiles\\test62.mol"
+            debug = False
     else:
         filename = args[0]
     

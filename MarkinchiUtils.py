@@ -1,8 +1,10 @@
 from rdkit.Chem.Draw import ShowMol, MolsToImage
 from rdkit.Chem.rdchem import Mol, Atom, EditableMol
-from rdkit.Chem import rdMolEnumerator, rdDistGeom
+from rdkit.Chem import rdMolEnumerator, rdDistGeom, AllChem
 from rdkit import Chem
 from copy import deepcopy
+
+from molzip import molzip
 
 
 def show(mols: list, 
@@ -61,7 +63,7 @@ def ctab_to_molblock(ctab: str) -> str:
 
     return molblock
 
-def enumerate_markush_mol(mol: Mol, rgroups: list) -> list:
+def enumerate_markush_mol(mol: Mol, rgroups: dict) -> list:
     # Gets a list of all possible Mols for a Markush Mol and list of R groups
     
     # Get any R groups directly referenced by this Mol
@@ -70,7 +72,7 @@ def enumerate_markush_mol(mol: Mol, rgroups: list) -> list:
     for atom in mol.GetAtoms():
         if atom.HasProp("_MolFileRLabel"):
             rlabel = atom.GetProp("_MolFileRLabel")
-            child_rgroups[rlabel] = rgroups[int(rlabel)-1]
+            child_rgroups[rlabel] = rgroups[int(rlabel)]
             rgroup_count += 1
     
     # For each child R group, get a list of all possible structures it could be
@@ -88,7 +90,7 @@ def enumerate_markush_mol(mol: Mol, rgroups: list) -> list:
 
     #Enumerate the varattachs using the built in RDKit functionality
     new_mol_list = enumerate_varattachs(mol)
-    
+
     mol_list = new_mol_list
 
     #Enumerate all R groups
@@ -115,7 +117,7 @@ def enumerate_markush_mol(mol: Mol, rgroups: list) -> list:
             Chem.rdmolops.SanitizeMol(mol)
             new_mol_list.append(mol)
         except:
-            show(mol)
+            #show(mol)
             print("Skipping an invalid molecule")
     
     mol_list = new_mol_list
@@ -192,55 +194,45 @@ def enumerate_rgroups(mol: Mol, rlabel: int, rgroup: list) -> list:
             # Replace the pseudoatom with an Xe atom as these are easier to work
             # with later
             if atom_rlabel == rlabel:
-                atom.SetAtomicNum(54)
+                atom.SetProp("isLinker", "True")
+                atom.SetProp("dummyLabel", "*")
+
+                mol = mark_stereo(mol, atom.GetIdx())
+                        
                 new_list = []
+
 
                 # For each component the R group could be, add the component to 
                 # the core and add this new Mol to the list of possibilities
                 for component in rgroup:
+
                     # Find the pseudoatom that represents the connection point
-                    link_idx = None
+
                     for comp_atom in component.GetAtoms():
                         if comp_atom.HasProp("isParentLinker"):
                             # Mark the atom which connects to the core
-                            for comp_neighbor in comp_atom.GetNeighbors():
-                                comp_neighbor.SetProp("rgroupLinkPoint", "True")
-                                
-                            # Remove the pseudoatom
-                            edit_mol = EditableMol(component)
-                            edit_mol.RemoveAtom(comp_atom.GetIdx())
-                            component = edit_mol.GetMol()
-                    
-                    # Get the index of the connecting atom on the component
-                    for comp_atom in component.GetAtoms():
-                        if comp_atom.HasProp("rgroupLinkPoint"):
-                            link_idx = comp_atom.GetIdx()
-                    
-                    # If the component is empty, it is just an H atom
-                    if link_idx == None:
-                        component = Chem.MolFromSmiles("[H]")
-                        link_idx = 0
+                            comp_atom.SetIntProp("molAtomMapNumber", 1)
+
+                            component = mark_stereo(
+                                component, comp_atom.GetIdx())
 
                     # Use RDKit replace substructs to replace the Xe atom with 
                     # the component
                     # We need to turn the molecule into a 3D conformation and
                     # then recompute the stereochemistry afterwards to ensure 
                     # it is correctly conserved
-                    try:
-                        replace_struct = Chem.MolFromSmiles("[Xe]")
-                        mol_copy = Chem.rdmolops.AddHs(mol, addCoords=True)
-                        #rdDistGeom.EmbedMolecule(mol_copy, maxAttempts=20)
-                        new_mol = Chem.ReplaceSubstructs(
-                            mol_copy,
-                            replace_struct,
-                            component,
-                            replaceAll = True,
-                            replacementConnectionPoint = link_idx
-                        )[0]
+                    try:  
+                        mol_copy = Chem.Mol(mol)
 
-                        Chem.rdmolops.AssignStereochemistryFrom3D(new_mol)
-                        new_mol = Chem.rdmolops.RemoveHs(new_mol)
-                        new_mol.UpdatePropertyCache()
+                        for atom_copy in mol_copy.GetAtoms():
+                            if atom_copy.HasProp("isLinker"):
+                                atom_copy.SetIntProp("molAtomMapNumber", 1)
+
+                        new_mol = molzip(mol_copy, component)
+                        new_mol = new_mol.GetMol()
+                        new_mol = update_stereo(new_mol)
+                        new_mol = cleanup_flags(new_mol)
+                        
                         new_list.append(new_mol)
                     except:
                         print("WARNING: Skipping invalid structure")
@@ -255,19 +247,122 @@ def enumerate_rgroups(mol: Mol, rlabel: int, rgroup: list) -> list:
         new_mol.UpdatePropertyCache()
         
     return new_list
-        
+
+def cleanup_flags(mol: Mol) -> Mol:
+
+    for atom in mol.GetAtoms():
+        atom.ClearProp("molAtomMapNumber")
+        atom.ClearProp("bond_me")
+        atom.ClearProp("delete_me")
+        atom.ClearProp("fixed")
+
+    return mol
+
+def mark_stereo(mol: Mol, idx: int) -> Mol:
+
+    # Label any bonds whose stereochemistry depends on atom with index idx
+    # This allows us to correctly relabel them if this atom is replaced
+
+    for bond in mol.GetBonds():
+        stereo_atoms = bond.GetStereoAtoms()
+        if len(stereo_atoms) != 0:
+            if idx in stereo_atoms:
+                bond.SetProp("updateStereo", "True")
+
+                if idx == stereo_atoms[0]:
+                    fixed_atom = mol.GetAtomWithIdx(stereo_atoms[1])
+                else:
+                    fixed_atom = mol.GetAtomWithIdx(stereo_atoms[0])
+
+                fixed_atom.SetProp("fixed", "True")
+
+    return mol
+
+def update_stereo(mol: Mol) -> Mol:
+
+    # Update the stereo labels for any bonds which were affected by combining
+    # two fragments
+
+    for bond in mol.GetBonds():
+        if bond.HasProp("updateStereo"):
+            bgn = bond.GetBeginAtom()
+            end = bond.GetEndAtom()
+
+            
+            # atom_1 is the one which has been reconnected
+            # atom_2 is the one that has not been changed
+            if bgn.HasProp("bond_me"):    
+                atom_1 = bgn
+                atom_2 = end
+            else:
+                atom_1 = end
+                atom_2 = bgn
+               
+            for neighbor in atom_1.GetNeighbors():
+                if neighbor.HasProp("bond_me"):
+                    marker_1 = neighbor.GetIdx()
+            
+            for neighbor in atom_2.GetNeighbors():
+                if neighbor.HasProp("fixed"):
+                    marker_2 = neighbor.GetIdx()
+
+            if atom_1.GetIdx() == bgn.GetIdx():
+                bond.SetStereoAtoms(marker_1, marker_2)
+            else:
+                bond.SetStereoAtoms(marker_2, marker_1)
+            
+        bond.ClearProp("updateStereo")
+    
+    return mol
+
 def enumerate_varattachs(mol: Mol) -> list:
 
     # Enumerates all possibilities for variable attachments
-    # This is straightforwardly done using RDKit's in built method
-    bundle = rdMolEnumerator.Enumerate(mol)
 
-    if len(bundle) == 0:
-        return [mol]
-    else:
-        return bundle
+    new_mol_list = []
+    for bond in mol.GetBonds():
+        if bond.HasProp("_MolFileBondEndPts"):
+
+            atom_a = bond.GetBeginAtom()
+            atom_b = bond.GetEndAtom()
+
+            if (atom_a.GetAtomicNum() == 0 and not
+                atom_a.HasProp("_MolFileRLabel")):
+                delete_idx = atom_a.GetIdx()
+                attach_idx = atom_b.GetIdx()
+            elif (atom_b.GetAtomicNum() == 0 and not
+                atom_b.HasProp("_MolFileRLabel")):
+                delete_idx = atom_b.GetIdx()
+                attach_idx = atom_a.GetIdx()
+            
+            endpt_str = bond.GetProp("_MolFileBondEndPts")[1:-1]
+            endpts = endpt_str.split()[1:]
+
+
+            for endpt in endpts:
+                edit_mol = EditableMol(mol)
+                edit_mol.BeginBatchEdit()
+                end_idx = int(endpt) - 1
+
+                end_atom = mol.GetAtomWithIdx(end_idx)
+                if end_atom.GetTotalNumHs() > 0:
+                    edit_mol.AddBond(
+                                attach_idx,
+                                end_idx,
+                                order=Chem.rdchem.BondType.SINGLE
+                            )
+                    edit_mol.RemoveAtom(delete_idx)
+                    edit_mol.CommitBatchEdit()
+                    new_mol = edit_mol.GetMol()
+                    new_mol.UpdatePropertyCache()
+                    new_mol_list += enumerate_varattachs(new_mol)
+
+            return new_mol_list
+        
+    return [mol]
     
 def inchis_from_mol_list(mol_list: list) -> list:
+
     # Gets the InChI for each mol in a list of Mols
     # If the structure is invalid, the InChI is given as None
 
@@ -282,3 +377,154 @@ def inchis_from_mol_list(mol_list: list) -> list:
             inchi_list.append(inchi)
 
     return inchi_list
+
+def parse_molfile(filename: str) -> tuple[Mol, dict]:
+
+    with open(filename) as file:
+                molfile_lines = file.readlines()
+
+    writing_core = 0
+    # status of writing the core molecule string
+    # 0=core not yet written
+    # 1=writing core
+    # 2=core writing finished
+    writing_rgroups = False
+
+    core_ctab = ""
+    rgroups = {}
+
+    for line in molfile_lines:
+
+        # Write the CTAB for the core of the molecule
+        if writing_core == 0:
+            if line.find("BEGIN CTAB") != -1:
+                writing_core = 1
+
+        if writing_core == 1:
+            if line.find("END CTAB") != -1:
+                writing_core = 2
+
+            core_ctab += line
+
+        # Get the CTABS for each component of each R group
+        # Also store attachment information
+        if line.find("BEGIN RGROUP") != -1:
+            rgroup_number = int(line.split()[4])
+            rgroup = []
+            writing_rgroups = True
+            rgroup_ctab = ""
+
+        if line.find("END RGROUP") != -1:
+            rgroups[rgroup_number] = rgroup
+            pass
+
+        if writing_rgroups:
+
+            if line.find("BEGIN CTAB") != -1:
+                rgroup_ctab = ""
+                rgroup_attachments = []  # [(attchpt, atom_no),..]
+
+            # Read attachment information
+            # Strip attachment information from the line as RDKit doesn't
+            # like atoms with multiple attchpts
+            if line.find("ATTCHPT") != -1:
+                new_line = ""
+                line_parts = line.split()
+                atom_idx = int(line_parts[2])
+                for line_part in line_parts:
+                    if line_part.find("ATTCHPT") != -1:
+                        attchpt = int(line_part.split("=")[1])
+                        # -1 means attached to 1 and 2
+                        if attchpt == -1:
+                            rgroup_attachments.append(
+                                (1, atom_idx)
+                            )
+                            rgroup_attachments.append(
+                                (2, atom_idx)
+                            )
+
+                        else:
+                            rgroup_attachments.append(
+                                (attchpt, atom_idx)
+                            )
+
+                    else:
+                        if line_part == "M":
+                            line_part += " "
+                        new_line += line_part
+                        new_line += " "
+
+                line = new_line + "\n"
+
+            rgroup_ctab += line
+
+            if line.find("END CTAB") != -1:
+                component_molblock = ctab_to_molblock(rgroup_ctab)
+                component = Chem.MolFromMolBlock(
+                    component_molblock, sanitize=False
+                    )
+                
+                Chem.rdmolops.SanitizeMol(component)
+                component = Chem.rdmolops.AddHs(component)
+                attach_idx = rgroup_attachments[0][1] - 1
+                atom = component.GetAtomWithIdx(attach_idx)
+
+                linker_added = False
+                for neighbor in atom.GetNeighbors():
+                    if (neighbor.GetAtomicNum() == 1 and not 
+                        linker_added):
+                        neighbor.SetAtomicNum(0)
+                        neighbor.SetProp("dummyLabel","*")
+                        neighbor.SetProp("isParentLinker", "True")
+                        linker_added = True
+
+
+
+                if not linker_added:
+                    raise Exception("Invalid R group connection point")
+                
+                atom.SetChiralTag(
+                    Chem.rdchem.ChiralType.CHI_UNSPECIFIED
+                )
+
+                component = Chem.rdmolops.RemoveHs(component)
+                
+
+                # Set the geometry of all bonds to the attachment point
+                # to be undefined
+                # We need to do this as the mol file format is ambiguous
+                # with its definition of R group connections
+                new_atom = component.GetAtomWithIdx(atom_idx)
+                for bond in new_atom.GetBonds():
+                    if(
+                        bond.GetBondType() == 
+                        Chem.rdchem.BondType.DOUBLE
+                        ):
+                        
+                        bond.SetStereo(
+                            Chem.rdchem.BondStereo.STEREOANY
+                        )
+                
+                component.UpdatePropertyCache()
+                
+                Chem.rdmolops.SanitizeMol(component)
+                
+                rgroup.append(component)
+
+                pass
+
+    core_molblock = ctab_to_molblock(core_ctab)
+    core_mol = Chem.MolFromMolBlock(core_molblock, sanitize=False)
+    Chem.rdmolops.SanitizeMol(core_mol)
+    
+    return core_mol, rgroups
+
+if __name__ == "__main__":
+
+    ref_mol, ref_rgroups = parse_molfile("D:\\alexl\\Documents\\MarkInChiV2\\molfiles\\test62.mol")
+    ref_list = enumerate_markush_mol(ref_mol, ref_rgroups)
+
+    for mol in ref_list:
+        show(mol)
+    ref_inchi_list = sorted(inchis_from_mol_list(ref_list))
+    
