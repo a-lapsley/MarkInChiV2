@@ -12,6 +12,7 @@ A tool to generate MarkInChi codes from v3000 .mol files. It can also parse a Ma
 - Variable attachments
 - Lists of atoms
 - Any nested combinations of these Markush structures
+- Molecules where the core of the molecule is symmetric, but has stereochemistry added by Markush functionality
 
 ## Limitations
 - Compounds with more than 200 R groups
