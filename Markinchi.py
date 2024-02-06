@@ -1,10 +1,15 @@
 import sys
 import os
+import getopt
 
 from MarkinchiGenerator import MarkinchiGenerator
 from MarkinchiParser import MarkinchiParser
+from MolEnumerator import MolEnumerator
 from BatchTest import BatchTest
 import MarkinchiUtils as MIUtils
+
+from rdkit import RDLogger
+RDLogger.DisableLog('rdApp.*')
 
 def generate_from_molfile(filename: str) -> str:
     
@@ -25,8 +30,8 @@ def molblock_from_markinchi(markinchi: str) -> str:
 def inchi_list_from_molfile(filename: str) -> str:
 
     mol, rgroups = MIUtils.parse_molfile(filename)
-    mol_list = MIUtils.enumerate_markush_mol(mol, rgroups)
-    inchi_list = MIUtils.inchis_from_mol_list(mol_list)
+    enumerator = MolEnumerator(mol, rgroups)
+    inchi_list = enumerator.get_inchi_list()
     inchi_list = sorted(inchi_list)
     
     output = ""
@@ -40,8 +45,8 @@ def inchi_list_from_markinchi(markinchi: str) -> str:
 
     parser = MarkinchiParser(markinchi)
     mol, rgroups = parser.parse_markinchi()
-    mol_list = MIUtils.enumerate_markush_mol(mol, rgroups)
-    inchi_list = MIUtils.inchis_from_mol_list(mol_list)
+    enumerator = MolEnumerator(mol, rgroups)
+    inchi_list = enumerator.get_inchi_list()
     inchi_list = sorted(inchi_list)
 
     output = ""
@@ -50,10 +55,7 @@ def inchi_list_from_markinchi(markinchi: str) -> str:
 
     return output
 
-def batch_test(filename: str) -> str:
-
-    if filename == None:
-        filename = "_testing_reference_list.txt"
+def batch_test(filename: str = "_testing_reference_list.txt") -> str:
 
     test_result = BatchTest().test(filename)
     files_read = test_result[0]
@@ -112,7 +114,7 @@ def batch_test(filename: str) -> str:
     return output
 
 def test_file(filename: str, print_lists: bool = False) -> str:
-    print(filename)
+
     output = ""
 
     markinchi_generator = MarkinchiGenerator()
@@ -136,16 +138,13 @@ def test_file(filename: str, print_lists: bool = False) -> str:
         output += "Regenerated MarkInChI did not match the original:\n"
         output += new_markinchi
 
-    new_list = MIUtils.enumerate_markush_mol(new_mol, new_rgroups)
-    new_inchi_list = list(
-                    set(MIUtils.inchis_from_mol_list(new_list)))
-    new_inchi_list = sorted(new_inchi_list)
+    new_enumerator = MolEnumerator(new_mol, new_rgroups)
+    new_inchi_list = new_enumerator.get_inchi_list()
 
     ref_mol, ref_rgroups = MIUtils.parse_molfile(filename)
-    ref_list = MIUtils.enumerate_markush_mol(ref_mol, ref_rgroups)
-    ref_inchi_list = list(set(MIUtils.inchis_from_mol_list(ref_list)))
-    ref_inchi_list = sorted(ref_inchi_list)
-
+    ref_enumerator = MolEnumerator(ref_mol, ref_rgroups)
+    ref_inchi_list = ref_enumerator.get_inchi_list()
+    
     if new_inchi_list == ref_inchi_list:
         output += "Correctly enumerated MarkInChI\n"
         if len(new_inchi_list) == 0:
@@ -155,13 +154,13 @@ def test_file(filename: str, print_lists: bool = False) -> str:
         output += "Original list contained %i InChIs\n" % len(ref_inchi_list)
         output += "New list contained %i InChIs\n" % len(new_inchi_list)
 
-        if print_lists:
-            output += "Original list: \n"
-            for inchi in ref_inchi_list:
-                output += inchi + "\n"
-            output += "\nNew list: \n"
-            for inchi in new_inchi_list:
-                output += inchi + "\n"
+    if print_lists:
+        output += "Original list: \n"
+        for inchi in ref_inchi_list:
+            output += inchi + "\n"
+        output += "\nNew list: \n"
+        for inchi in new_inchi_list:
+            output += inchi + "\n"
 
         
     return output
@@ -208,10 +207,9 @@ if __name__ == "__main__":
     except:
         command = "help"
     
-    try:
-        arguments = argv[1:]
-    except:
-        arguments = [None]
+    
+    argv = argv[1:]
+
 
 
 
@@ -221,41 +219,57 @@ if __name__ == "__main__":
 
     if command.lower() in ("generate", "gen"):
 
-        filename = find_file(arguments[0])
+        filename = argv[0]
+        filename = find_file(filename)
         output = generate_from_molfile(filename)
         print(output)
 
     if command.lower() in ("markinchitomolblock", "mitomolblock"):
 
-        markinchi = arguments[0]
+        markinchi = argv[0]
         output = molblock_from_markinchi(markinchi)
         print(output)
 
     if command.lower() in ("molfiletoinchilist"):
 
-        filename = find_file(arguments[0])
+        filename = argv[0]
+        filename = find_file(filename)
         output = inchi_list_from_molfile(filename)
         print(output)
 
     if command.lower() in ("markinchitoinchilist", "mitoinchilist"):
 
-        markinchi = arguments[0]
+        markinchi = argv[0]
         output = inchi_list_from_markinchi(markinchi)
         print(output)
 
     if command.lower() in ("batchtest", ""):
         
-        filename = arguments[0]
+        opts, args = getopt.getopt(argv, "f:",["file="])
+
+        filename = "_testing_reference_list.txt"
+        for opt, arg in opts:
+            if opt in ["-f", "--file"]:
+                filename = arg
+
+       
         output = batch_test(filename)
+
+
         print(output)
 
     if command.lower() in ("test", ""):
 
-        filename = find_file(arguments[0])
+        filename = argv[0]
+    
+        opts, args = getopt.getopt(argv[1:],"l",["list"])
+
         list_inchis = False
-        
-        if "list" in arguments:
-            list_inchis = True
+        for opt, arg in opts:
+            if opt in ["-l", "--list"]:
+                list_inchis = True
+
+        filename = find_file(filename)
 
         output = test_file(filename, list_inchis)
         print(output)

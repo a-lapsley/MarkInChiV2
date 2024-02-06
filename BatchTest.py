@@ -1,6 +1,7 @@
 from MarkinchiGenerator import MarkinchiGenerator
 from MarkinchiParser import MarkinchiParser
-import MarkinchiUtils as MUtils
+from MolEnumerator import MolEnumerator
+import MarkinchiUtils as MIUtils
 import os
 
 class BatchTest():
@@ -53,16 +54,13 @@ class BatchTest():
                     (filename, reparsed_markinchi, markinchi)
                     )
 
-            ref_mol, ref_rgroups = MUtils.parse_molfile(molfile)
-            ref_list = MUtils.enumerate_markush_mol(ref_mol, ref_rgroups)
-            ref_inchi_list = list(set(MUtils.inchis_from_mol_list(ref_list)))
-            ref_inchi_list = sorted(ref_inchi_list)
+            ref_mol, ref_rgroups = MIUtils.parse_molfile(molfile)
+            ref_enumerator = MolEnumerator(ref_mol, ref_rgroups)
+            ref_inchi_list = ref_enumerator.get_inchi_list()
 
             try:
-                new_list = MUtils.enumerate_markush_mol(new_mol, new_rgroups)
-                new_inchi_list = list(
-                    set(MUtils.inchis_from_mol_list(new_list)))
-                new_inchi_list = sorted(new_inchi_list)
+                new_enumerator = MolEnumerator(new_mol, new_rgroups)
+                new_inchi_list = new_enumerator.get_inchi_list()
             except:
                 new_inchi_list = "Unable to generate InChI list"
 

@@ -714,7 +714,7 @@ if __name__ == "__main__":
 
     debug = False
 
-    filename = "molfiles\\test58.mol"
+    filename = "molfiles\\structures_for_testing\\exx2.mol"
     filedir = os.path.join(os.getcwd(), filename)
     markinchi_generator = MarkinchiGenerator()
 
@@ -741,18 +741,18 @@ if __name__ == "__main__":
 
     
     
-    import MarkinchiUtils as MUtils
+    import MarkinchiUtils as MIUtils
 
-    mol_list = MUtils.enumerate_markush_mol(mol, rgroups)
+    mol_list = MIUtils.enumerate_markush_mol(mol, rgroups)
     new_inchi_list = list(
-    set(MUtils.inchis_from_mol_list(mol_list)))
+    set(MIUtils.inchis_from_mol_list(mol_list)))
     new_inchi_list = sorted(new_inchi_list)
 
 
-    ref_mol, ref_rgroups = MUtils.parse_molfile(filename)
-    ref_list = MUtils.enumerate_markush_mol(ref_mol, ref_rgroups)
-    ref_inchi_list = MUtils.inchis_from_mol_list(ref_list)
-    ref_inchi_list = list(set(MUtils.inchis_from_mol_list(ref_list)))
+    ref_mol, ref_rgroups = MIUtils.parse_molfile(filename)
+    ref_list = MIUtils.enumerate_markush_mol(ref_mol, ref_rgroups)
+    ref_inchi_list = MIUtils.inchis_from_mol_list(ref_list)
+    ref_inchi_list = list(set(MIUtils.inchis_from_mol_list(ref_list)))
     ref_inchi_list = sorted(ref_inchi_list)
     print(ref_inchi_list)
     print(new_inchi_list)

@@ -1324,13 +1324,18 @@ class RGroup():
         # adds pseudoatoms to the Mol structure to represent the linkage points
         # back to the parent structure
         # Also sets list of indices for these atoms.
+
         for component in self.components:
             mol = component["mol"]
+
+            component_is_H = False
+            if Chem.MolToSmiles(mol) == "[HH]":
+                component_is_H = True
+
             attachments = component["attachments"]
             mol.UpdatePropertyCache()
             mol = Chem.rdmolops.AddHs(mol)
             atoms = mol.GetAtoms()
-            # Single atom R groups are treated differently
             for atom in atoms:
                 atom_idx = atom.GetIdx()
                 # RDKit labels start at 0 but molfile labels start at 1
@@ -1373,6 +1378,9 @@ class RGroup():
                         
                         mol.UpdatePropertyCache()
 
+                if component_is_H:
+                    mol = Chem.MolFromSmiles("[Xe][H]")
+                    
                 component["mol"] = mol
 
     def generate_component_inchis(self, rgroups: dict) -> None:
@@ -1621,7 +1629,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\test62.mol"
+            filename = "molfiles\\structures_for_testing\\ext40.mol"
             debug = False
     else:
         filename = args[0]
