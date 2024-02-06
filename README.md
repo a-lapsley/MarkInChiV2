@@ -18,12 +18,22 @@ A tool to generate MarkInChi codes from v3000 .mol files. It can also parse a Ma
 - Xenon, Radon and Neon containing compounds
 
 ## Usage
-To use this software, run the program `MarkinchiGUI.py` to launch a GUI program that contains various functionalities. The Jupyter notebook `Demos.ipynb` also contains demonstrations of the functionalities of this software. 
+- To run this software from the command line, call the program `Markinchi.py`
+  - Available commands:
+    - `help` - Displays a list of available commands
+    - `generate <filename>` Generates a MarkInChI from a Mol file
+    - `markinchitomolblock <markinchi>` Generates a V3000 Mol Block from a MarkInChI
+    - `molfiletoinchilist <filename>` Generates a list of InChIs from a Mol file
+    - `markinchitoinchilist <markinchi>` Generates a list of InChIs from a MarkInChI
+    - `batchtest [-f filename]` Checks all test files work correctly. If `-f` is specified, can use a different file as the reference list.
+    - `test <filename> [-l]` Checks whether the specified file works correctly. If `-l` is specified, will print generated lists of InChIs.
+- To use this software from with GUI, simply run the program `MarkinchiGUI.py`
+
 
 ## Generating .mol files with Markush features
 All molfiles used for testing and developing this software were produced using MarvinSketch 23.17. It may be possible to generate molfiles using other methods, however these have not yet been tested so may cause issues.
 
 ## Known issues
  - Variable attachments which are defined to have endpoints which have no hydrogen atoms on the core structure are known to cause errors. This includes molecules where the endpoints could be tautomeric, and, for example, an endpoint defined to be a quaternary carbon.
- - This program does not currently handle stereochemistry correctly when the core of the molecule is achiral or symmetric, but the presence of Markush features makes it chiral / asymmetric
+
 

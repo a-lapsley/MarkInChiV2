@@ -144,7 +144,7 @@ def test_file(filename: str, print_lists: bool = False) -> str:
     ref_mol, ref_rgroups = MIUtils.parse_molfile(filename)
     ref_enumerator = MolEnumerator(ref_mol, ref_rgroups)
     ref_inchi_list = ref_enumerator.get_inchi_list()
-    
+
     if new_inchi_list == ref_inchi_list:
         output += "Correctly enumerated MarkInChI\n"
         if len(new_inchi_list) == 0:
@@ -176,7 +176,10 @@ def help() -> None:
           "Generates a list of InChIs from a Mol file")
     print("markinchitoinchilist <markinchi>\t"
           "Generates a list of InChIs from a MarkInChI")
-    print("batchtest\t\t\t\tChecks all test files work correctly")
+    print("batchtest [-f filename]\t\t\tChecks all test files work correctly")
+    print("\t-f filename\t\t\tSpecifies a file to use as a reference list")
+    print("test <filename> [-l]\t\t\tTests whether a file works correctly")
+    print("\t-l\t\t\t\tIf used, will print generated lists of InChIs")
     
 def find_file(filename: str) -> str:
 
