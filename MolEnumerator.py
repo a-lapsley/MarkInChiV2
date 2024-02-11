@@ -342,3 +342,7 @@ class MolEnumerator():
             inchi_list = sorted(inchi_list)
 
         return inchi_list
+    
+    def get_mol_list(self) -> list:
+
+        return self.mol_list

@@ -253,7 +253,10 @@ class MarkInChI():
         # Canonicalise the atom indices of self.mol by converting to InChI and
         # back again
 
-        core_inchi, aux = Chem.MolToInchiAndAuxInfo(self.mol)
+        opt=""
+        if len(self.mol.GetAtoms()) > 1000:
+            opt += "-LargeMolecules"
+        core_inchi, aux = Chem.MolToInchiAndAuxInfo(self.mol, options=opt)
         self.mol = Chem.MolFromInchi(core_inchi)
         
         core_stereo = self.extract_stereo_info(core_inchi)
@@ -493,8 +496,6 @@ class MarkInChI():
         # Iterate through attachments in alphabetical order (they have already
         # been sorted) - this is the order of priority
 
-        
-
         for i, varattach in enumerate(varattachs):
 
             for endpt in varattach.get_endpts():
@@ -623,13 +624,17 @@ class MarkInChI():
         
         mol.UpdatePropertyCache(strict=False)
         
+        opt = ""
+        if len(mol.GetAtoms()) > 1000:
+            opt += "-LargeMolecules"
 
-        inchi, aux = Chem.MolToInchiAndAuxInfo(mol)
-
+        inchi, aux = Chem.MolToInchiAndAuxInfo(mol, options=opt)
         mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
         # Extract the information in the stereochemical layers from 
         stereo_layers = self.extract_stereo_info(inchi)
         
+        
+
         aux = aux.split("/N:")[1]
         aux = aux.split("/")[0]
 
@@ -637,6 +642,7 @@ class MarkInChI():
         new_indices = []
         for idx in aux.split(","):
             new_indices.append(int(idx)-1)
+
 
         inchi_to_old_mapping = {}
         for inchi_index, old_index in enumerate(new_indices):
@@ -957,6 +963,8 @@ class MarkInChI():
 
         Generate a mapping of these atoms' indices to their R group label.
         """
+        mol.UpdatePropertyCache(strict=False)
+        mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
         index_to_rlabel_map = {}
         for atom in mol.GetAtoms():
             if atom.HasProp("_MolFileRLabel"):
@@ -1629,7 +1637,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\structures_for_testing\\ext40.mol"
+            filename = "molfiles\\test75.mol"
             debug = False
     else:
         filename = args[0]
