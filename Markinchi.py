@@ -136,7 +136,7 @@ def test_file(filename: str, print_lists: bool = False) -> str:
         output += "MarkInChI succesfully parsed and regenerated\n"
     else:
         output += "Regenerated MarkInChI did not match the original:\n"
-        output += new_markinchi
+        output += new_markinchi + "\n"
 
     new_enumerator = MolEnumerator(new_mol, new_rgroups)
     new_inchi_list = new_enumerator.get_inchi_list()

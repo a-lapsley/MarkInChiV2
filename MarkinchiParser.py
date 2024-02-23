@@ -51,8 +51,7 @@ class MarkinchiParser(object):
                 listatom_strings
             )
         
-
-
+        core_mol = self.sanitize_core(core_mol)
 
         core_mol, rgroup_strings = self.xe_to_rgroups(core_mol, rgroup_strings)
 
@@ -63,12 +62,10 @@ class MarkinchiParser(object):
             core_mol = self.add_varattach(core_mol, varattach_string)
 
         for rgroup, nested_rgroups in zip(self.rgroups, self.nested_rgroups):
-            for component in rgroup:
+            for component, comp_rgroups in zip(rgroup, nested_rgroups):
                 component = self.update_rlabels(component)
-            
-            nested_rgroups = self.update_nested_rlabels(nested_rgroups)
-
-            self.rgroups += nested_rgroups
+                comp_rgroups = self.update_nested_rlabels(comp_rgroups)
+                self.rgroups += comp_rgroups
 
         for i, rgroup in enumerate(self.rgroups):
             self.rgroups_dict[i + 1] = rgroup
@@ -97,7 +94,6 @@ class MarkinchiParser(object):
             inchi = "InChI=1S/" + markinchi_part
 
         inchi = inchi.replace("Zz","Xe")
-        
         core_mol = Chem.MolFromInchi(inchi)
 
         return core_mol
@@ -529,6 +525,7 @@ class MarkinchiParser(object):
         molblock = Chem.MolToV3KMolBlock(mol)
         mol = Chem.MolFromMolBlock(molblock, sanitize=False)
         Chem.rdmolops.SanitizeMol(mol)
+        Chem.Kekulize(mol, clearAromaticFlags=True)
 
         for idx in parent_linker_indices:
             atom = mol.GetAtomWithIdx(idx)
@@ -573,8 +570,10 @@ class MarkinchiParser(object):
                 parser = MarkinchiParser(component)
                 mol, rgroups = parser.parse_markinchi()
                 rgroup.append(mol)
+                component_nested_rgroups = []
                 for i in rgroups.keys():
-                    nested_rgroups.append(rgroups[i])
+                    component_nested_rgroups.append(rgroups[i])
+            nested_rgroups.append(component_nested_rgroups)
 
         self.rgroups.append(rgroup)
         self.nested_rgroups.append(nested_rgroups)
@@ -642,8 +641,7 @@ class MarkinchiParser(object):
             atom.SetProp("isParentLinker", "True")
             atom.SetProp("dummyLabel", "*")
             atom.ClearProp("_MolFileRLabel")
-
-
+        
         return mol
 
     def get_molblock(self) -> str:
@@ -662,6 +660,7 @@ class MarkinchiParser(object):
                             neighbor.SetProp("isAttachPoint", "True")
                         
                         linker_idx = atom.GetIdx()
+                        Chem.Kekulize(component, clearAromaticFlags=True)
                         editmol = EditableMol(component)
                         editmol.RemoveAtom(linker_idx)
                         new_component = editmol.GetMol()
@@ -679,7 +678,7 @@ class MarkinchiParser(object):
                 if (len(new_component.GetAtoms()) == 1 and
                     new_component.GetAtomWithIdx(0).GetAtomicNum() == 1):
                     new_component = Chem.AddHs(new_component)
-      
+
                 component_block = Chem.MolToV3KMolBlock(new_component)
                 new_component_block = ""
                 lines = component_block.split("\n")
@@ -708,13 +707,54 @@ class MarkinchiParser(object):
 
         return core_block
 
+    def sanitize_core(self, mol: Mol) -> Mol:
+        # Cleans up various aspects of the core mol that cause issues
+
+        # Remove any aromaticity and replace with standard double/single bonds
+        Chem.Kekulize(mol, clearAromaticFlags=True)
+
+        # Make any bonds to Xe atoms single
+        for atom in mol.GetAtoms():
+            if atom.GetAtomicNum() == 54:
+                for bond in atom.GetBonds():
+                    bond.SetBondType(Chem.rdchem.BondType.SINGLE)
+
+        # If we created any new radicals with the above steps, form double bonds
+        # between any neighbors
+        Chem.rdmolops.SanitizeMol(mol)
+        for atom_a in mol.GetAtoms():
+            if (
+                atom_a.GetAtomicNum() != 54 and
+                atom_a.GetNumRadicalElectrons() > 0
+            ):
+                radical_a = atom_a.GetNumRadicalElectrons()
+                for atom_b in atom_a.GetNeighbors():
+                    if (
+                        atom_b.GetAtomicNum() != 54 and
+                        atom_b.GetNumRadicalElectrons() > 0
+                        ):
+                        radical_b = atom_b.GetNumRadicalElectrons()
+                        idx_a = atom_a.GetIdx()
+                        idx_b = atom_b.GetIdx()
+                        bond = mol.GetBondBetweenAtoms(idx_a, idx_b)
+                        if bond.GetBondType() == Chem.rdchem.BondType.SINGLE:
+                            bond.SetBondType(Chem.rdchem.BondType.DOUBLE)
+                            atom_a.SetNumRadicalElectrons(radical_a - 1)
+                            atom_b.SetNumRadicalElectrons(radical_b - 1)
+                        mol.UpdatePropertyCache()
+
+        Chem.rdmolops.SanitizeMol(mol)
+
+        return mol
+    
+
 if __name__ == "__main__":
 
     from MarkinchiGenerator import MarkinchiGenerator
 
     debug = False
 
-    filename = "molfiles\\structures_for_testing\\exx2.mol"
+    filename = "molfiles\\test81.mol"
     filedir = os.path.join(os.getcwd(), filename)
     markinchi_generator = MarkinchiGenerator()
 
@@ -726,6 +766,7 @@ if __name__ == "__main__":
 
     parser = MarkinchiParser(markinchi)
     mol, rgroups = parser.parse_markinchi()
+    show(mol)
     molblock = parser.get_molblock()
     for i in rgroups.keys():
         print("R%i" % (i))

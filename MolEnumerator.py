@@ -166,7 +166,11 @@ class MolEnumerator():
                                 comp_atom.SetIntProp("molAtomMapNumber", 1)
 
                                 component = self.mark_stereo(
-                                    component, comp_atom.GetIdx())
+                                    component, comp_atom.GetIdx()
+                                    )
+                                
+                                for neighbor in comp_atom.GetNeighbors():
+                                    neighbor.SetProp("bond_me", "True")
 
                         # Use RDKit replace substructs to replace the Xe atom with 
                         # the component
@@ -179,14 +183,20 @@ class MolEnumerator():
                             for atom_copy in mol_copy.GetAtoms():
                                 if atom_copy.HasProp("isLinker"):
                                     atom_copy.SetIntProp("molAtomMapNumber", 1)
-                            new_mol = molzip(mol_copy, component)
+                                    
+                                    for neighbor in atom_copy.GetNeighbors():
+                                        neighbor.SetProp("bond_me", "True")
+
+                            new_mol = Chem.rdmolops.CombineMols(
+                                mol_copy, component
+                            )
+                            new_mol = Chem.molzip(new_mol)
                             
-                            new_mol = new_mol.GetMol()
                             new_mol = self.update_stereo(new_mol)
                             new_mol = self.cleanup_flags(new_mol)
                             
                             new_list.append(new_mol)
-                        except:
+                        except Exception as e:
                             print("WARNING: Skipping invalid structure")
         
         # Remove any markers from the atoms in the Mols in the list we have
@@ -263,7 +273,6 @@ class MolEnumerator():
             if bond.HasProp("updateStereo"):
                 bgn = bond.GetBeginAtom()
                 end = bond.GetEndAtom()
-
                 
                 # atom_1 is the one which has been reconnected
                 # atom_2 is the one that has not been changed
