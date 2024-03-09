@@ -1,7 +1,7 @@
 from rdkit import Chem
 from rdkit.Chem.rdchem import EditableMol, Mol
 from rdkit.Chem.MolStandardize import rdMolStandardize
-from MarkinchiUtils import show
+from MarkinchiUtils import show, parse_molblock
 
 import os
 import sys
@@ -52,6 +52,8 @@ class MarkinchiParser(object):
             )
         
         core_mol = self.sanitize_core(core_mol)
+        
+        
 
         core_mol, rgroup_strings = self.xe_to_rgroups(core_mol, rgroup_strings)
 
@@ -73,7 +75,7 @@ class MarkinchiParser(object):
 
         for listatom_string in listatom_strings:
             core_mol = self.add_listatom(core_mol, listatom_string)
-        
+
         if debug:
             show(core_mol, indices=True)
 
@@ -111,7 +113,7 @@ class MarkinchiParser(object):
         
         mol.UpdatePropertyCache(strict=False)
 
-        edit_mol = EditableMol(mol)
+        
 
         rgroup_count = 0
 
@@ -126,20 +128,22 @@ class MarkinchiParser(object):
                 if atom.GetAtomicNum() == 54:
                     if rgroup_strings[xe_counter] != "":
                         idx_a = atom.GetIdx()
-                        for i in range(rgroup_count - xe_counter):
+                        for i in range(1 + rgroup_count - xe_counter):
                             new_atom = Chem.Atom(54)
+                            edit_mol = EditableMol(mol)
                             idx_b = edit_mol.AddAtom(new_atom)
                             edit_mol.AddBond(
                                 idx_a,
                                 idx_b,
                                 order=Chem.rdchem.BondType.SINGLE
                             )
+                            mol = edit_mol.GetMol()
+                            
                             idx_a = idx_b
                             dummy_atom_indices.append(idx_b)
-                        xe_counter += 1
 
-        mol = edit_mol.GetMol()
-
+                    xe_counter += 1
+        
         varattach_count = len(varattach_strings)
 
         for i, varattach_string in enumerate(varattach_strings):
@@ -191,6 +195,51 @@ class MarkinchiParser(object):
 
                 mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
 
+        listatom_count = len(listatom_strings)
+
+        for i, listatom_string in enumerate(listatom_strings):
+            idx = int(listatom_string.split("-")[0])
+        
+            mol.UpdatePropertyCache(strict=False)
+            mol = Chem.rdmolops.AddHs(mol)
+
+            core_atom = mol.GetAtomWithIdx(idx - 1)
+
+            # If the endpoint has already been labelled by a higher priority
+            # group, don't do anything further
+            already_marked = False
+            for neighbor in core_atom.GetNeighbors():
+                if neighbor.GetAtomicNum() == 86:
+                    already_marked = True
+
+            if not already_marked:
+
+                idx_a = None
+                # Replace one of the hydrogens on this endpoint with a Rn
+                for neighbor in core_atom.GetNeighbors():
+                    if neighbor.GetAtomicNum() == 1 and idx_a == None:
+                        neighbor.SetAtomicNum(10)
+                        neighbor.SetProp("firstInChain", "True")
+                        idx_a = neighbor.GetIdx()
+
+                # Extend the chain of Rn atoms according to the priority of
+                # the group
+                # E.g. if there are 3 groups, highest priority group has a
+                # chain length of 3, so add 2 more Rn (we have already
+                # added the first one in the previous step)
+                for j in range(listatom_count - i - 1):
+                    edit_mol = EditableMol(mol)
+                    idx_b = edit_mol.AddAtom(Chem.Atom(10))
+                    edit_mol.AddBond(
+                        idx_a,
+                        idx_b,
+                        order=Chem.rdchem.BondType.SINGLE
+                    )
+                    mol = edit_mol.GetMol()
+                    idx_a = idx_b
+
+            mol = Chem.rdmolops.RemoveHs(mol, sanitize=False)
+
         first_in_chain_indices = []    
         for atom in mol.GetAtoms():
             if atom.GetAtomicNum() in (86, 10):
@@ -213,7 +262,7 @@ class MarkinchiParser(object):
                 layer = "isotope"
             if key in ("b", "t", "m", "s"):
                 new_stereo[layer][key] = part
-
+        
         inchi, aux = Chem.MolToInchiAndAuxInfo(mol)
         aux = aux.split("/N:")[1]
         aux = aux.split("/")[0]
@@ -222,10 +271,32 @@ class MarkinchiParser(object):
         for idx in aux.split(","):
             new_indices.append(int(idx)-1)
         
+        
         reverse_mapping = []
         for i in range(len(new_indices)):
             reverse_mapping.append(new_indices.index(i))
         reverse_mapping = tuple(reverse_mapping)
+
+
+        # Remap stereo to new indices
+
+        for layer in ("main", "isotope"):
+            if new_stereo[layer]["t"] != "":
+                t_layer = new_stereo[layer]["t"]
+                new_tlayer = "t"
+                centres = t_layer[1:].split(",")
+                for centre in centres:
+                    if centre.find("+") != -1:
+                        sign = "+"
+                    elif centre.find("-") != -1:
+                        sign = "-"
+                    else:
+                        sign = "?"
+                    idx = int(centre[:-1])
+                    new_idx = reverse_mapping[idx - 1] + 1
+                    new_tlayer += str(new_idx) + sign
+                new_stereo[layer]["t"] = new_tlayer
+
 
         new_inchi_parts = {"main": "", "isotope": ""}
         inchi_parts = inchi.split("/")
@@ -255,6 +326,7 @@ class MarkinchiParser(object):
         mol = Chem.MolFromInchi(new_inchi)
         mol = Chem.RenumberAtoms(mol, reverse_mapping)
         mol.UpdatePropertyCache()
+        
 
 
         for idx in first_in_chain_indices:
@@ -271,7 +343,7 @@ class MarkinchiParser(object):
         edit_mol.CommitBatchEdit()
         mol = edit_mol.GetMol()
         mol = Chem.rdmolops.RemoveHs(mol)
-
+        
         return mol
 
     def xe_to_rgroups(self, mol: Mol, rgroup_strings: list) -> tuple[Mol, list]:
@@ -634,7 +706,7 @@ class MarkinchiParser(object):
 
         molblock = Chem.MolToV3KMolBlock(mol)
         molblock = molblock.replace(replace_string, new_string)
-        mol = Chem.MolFromMolBlock(molblock)
+        mol = parse_molblock(molblock)[0]
 
         for idx in parent_linker_indices:
             atom = mol.GetAtomWithIdx(idx)
@@ -674,6 +746,10 @@ class MarkinchiParser(object):
                     if atom.HasProp("isAttachPoint"):
                         idx = atom.GetIdx() + 1
                         element = atom.GetSymbol()
+                        
+                        if atom.HasProp("_MolFileRLabel"):
+                            element = "R#"
+                    
                         
                 if (len(new_component.GetAtoms()) == 1 and
                     new_component.GetAtomWithIdx(0).GetAtomicNum() == 1):
@@ -754,7 +830,7 @@ if __name__ == "__main__":
 
     debug = False
 
-    filename = "molfiles\\test81.mol"
+    filename = "molfiles\\structures_for_testing\\ext122.mol"
     filedir = os.path.join(os.getcwd(), filename)
     markinchi_generator = MarkinchiGenerator()
 
@@ -766,12 +842,15 @@ if __name__ == "__main__":
 
     parser = MarkinchiParser(markinchi)
     mol, rgroups = parser.parse_markinchi()
-    show(mol)
+
+    #show(mol)
     molblock = parser.get_molblock()
+    print(molblock)
     for i in rgroups.keys():
         print("R%i" % (i))
         for component in rgroups[i]:
-            show(component, indices=True)
+            #show(component, indices=True)
+            pass
 
     markinchi_generator = MarkinchiGenerator()
     markinchi_generator.get_from_molblock(molblock)
@@ -782,26 +861,16 @@ if __name__ == "__main__":
 
     
     
+    from MolEnumerator import MolEnumerator
     import MarkinchiUtils as MIUtils
-
-    mol_list = MIUtils.enumerate_markush_mol(mol, rgroups)
-    new_inchi_list = list(
-    set(MIUtils.inchis_from_mol_list(mol_list)))
-    new_inchi_list = sorted(new_inchi_list)
 
 
     ref_mol, ref_rgroups = MIUtils.parse_molfile(filename)
-    ref_list = MIUtils.enumerate_markush_mol(ref_mol, ref_rgroups)
-    ref_inchi_list = MIUtils.inchis_from_mol_list(ref_list)
-    ref_inchi_list = list(set(MIUtils.inchis_from_mol_list(ref_list)))
-    ref_inchi_list = sorted(ref_inchi_list)
-    print(ref_inchi_list)
-    print(new_inchi_list)
-    
-    print(new_inchi_list == ref_inchi_list)
+    enumerator = MolEnumerator(ref_mol, ref_rgroups)
+    ref_list = enumerator.get_mol_list()
+    ref_inchi_list = enumerator.get_inchi_list()
 
-
-    for inchi in new_inchi_list:
+    for inchi in ref_inchi_list:
         show(Chem.MolFromInchi(inchi))
 
 

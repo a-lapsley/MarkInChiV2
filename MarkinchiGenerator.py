@@ -1,10 +1,11 @@
 from rdkit import Chem
 from rdkit.Chem.rdchem import EditableMol, Atom, Mol
 from copy import deepcopy
-from MarkinchiUtils import show, ctab_to_molblock
+from MarkinchiUtils import show, ctab_to_molblock, parse_molblock
 import os
 import sys
 import getopt
+import json
 
 # Default settings
 debug = False
@@ -20,10 +21,10 @@ class MarkinchiGenerator(object):
     def generate_markinchi(self) -> str:
         # Generates the MarkInChI for the core and rgroups
         if self.core != None:
-            markinchi = MarkInChI(
+            constructor = MarkinchiConstructor(
                 self.core, rgroups=self.rgroups, final=True
             )
-            return markinchi.get_markinchi()
+            return constructor.get_markinchi()
         else:
             return "No or invalid file provided"
 
@@ -41,6 +42,7 @@ class MarkinchiGenerator(object):
 
         core_ctab = ""
         rgroups = {}
+        abbr_groups = {}
 
         for line in molfile_lines:
 
@@ -107,13 +109,20 @@ class MarkinchiGenerator(object):
                 rgroup_ctab += line
 
                 if line.find("END CTAB") != -1:
-                    rgroup.add_component(rgroup_ctab, rgroup_attachments)
+                    nested_rgroups = rgroup.add_component(
+                        rgroup_ctab, rgroup_attachments)
+                    abbr_groups = {**abbr_groups, **nested_rgroups}
 
         core_molblock = ctab_to_molblock(core_ctab)
-        core_mol = Chem.MolFromMolBlock(core_molblock, sanitize=False)
-        Chem.rdmolops.SanitizeMol(core_mol)
-        Chem.rdmolops.AssignStereochemistry(core_mol)
+        core_mol, core_abbr_rgroups = parse_molblock(core_molblock)
 
+        abbr_groups = {**core_abbr_rgroups, **abbr_groups}
+
+        for id in abbr_groups.keys():
+            rgroup = RGroup(id)
+            for component in abbr_groups[id]:
+                rgroup.add_mol_component(component)
+            rgroups[id] = rgroup
 
         self.core = core_mol
         self.rgroups = rgroups
@@ -141,8 +150,9 @@ class MarkinchiGenerator(object):
                 else:
                     self.read_molfile_lines(lines)
                     return None
-        except:
+        except Exception as e:
             print("Unable to open file \'%s\'" % file_path)
+            print(e)
             return None
 
     def get_from_molblock(self, molblock: str) -> None:
@@ -162,7 +172,7 @@ class MarkinchiGenerator(object):
         except:
             pass
 
-class MarkInChI():
+class MarkinchiConstructor():
 
     # Class for generating a MarkInChI string from a fragment
 
@@ -344,7 +354,8 @@ class MarkInChI():
                 else:
                     rlabel = None
 
-                if rlabel == None and xe_atom_count > 1:
+                if (rlabel == None and 
+                    xe_atom_count > 1):
                     markush_strings += "<M></M>"
                 elif rlabel != None:
                     string = self.child_rgroups[rlabel].get_final_inchi()
@@ -1163,55 +1174,19 @@ class MarkInChI():
 
                     atomic_nums = sorted(atomic_nums)
 
-                    idx = atom.GetIdx() + 1
+                    idx = atom.GetIdx()
 
-                    edit_mol = EditableMol(mol)
+                    
 
                     if 6 in atomic_nums:
-                        new_atom = Atom(6)
+                        atom.SetAtomicNum(6)
                     elif 1 in atomic_nums:
-                        new_atom = Atom(atomic_nums[1])
+                        atom.SetAtomicNum(atomic_nums[1])
                     else:
-                        new_atom = Atom(atomic_nums[0])
-
-                    # Arbitrary property so we can track this atom
-                    new_atom.SetProp("isList", "1")
-                    new_atom_idx = edit_mol.AddAtom(new_atom)
-
-                    for bond in atom.GetBonds():
-
-                        if bond.GetBeginAtomIdx() == idx - 1:
-                            new_bond_end = bond.GetEndAtomIdx()
-                        else:
-                            new_bond_end = bond.GetBeginAtomIdx()
-
-                        bond_type = bond.GetBondType()
-
-                        edit_mol.AddBond(
-                            new_atom_idx, new_bond_end, order=bond_type
-                        )
-
-                    edit_mol.RemoveAtom(idx - 1)
-
-                    mol = edit_mol.GetMol()
-
-                    new_indices = []
-
-                    for i in range(len(mol.GetAtoms())):
-                        if i == idx - 1:
-                            new_indices.append(new_atom_idx - 1)
-                        elif i < idx:
-                            new_indices.append(i)
-                        elif i >= idx:
-                            new_indices.append(i - 1)
-
-                    mol = Chem.RenumberAtoms(mol, tuple(new_indices))
+                        atom.SetAtomicNum(atomic_nums[0])
 
                     listatom = {}
-                    for atom in mol.GetAtoms():
-                        if atom.HasProp("isList"):
-                            listatom["idx"] = atom.GetIdx() + 1
-                            atom.ClearProp("isList")
+                    listatom["idx"] = idx + 1
 
                     listatom["atomic_nums"] = atomic_nums
                     listatoms.append(listatom)
@@ -1293,7 +1268,7 @@ class RGroup():
 
     # Class for representing an R group
 
-    def __init__(self, id: int) -> None:
+    def __init__(self, id: int, xe_added: bool = False) -> None:
         self.id = id  # The R label of the R group
         self.components = []  # List of each possible component in the R group
         self.inchi = ""  # MarkInChI string for the R group
@@ -1312,19 +1287,26 @@ class RGroup():
     def set_processed(self, processed: bool) -> None:
         self.processed = processed
 
-    def add_component(self, ctab: str, attachments: list) -> None:
+    def add_component(self, ctab: str, attachments: list) -> dict:
         # Adds a component to the R group from a CTAB
         # attachments is not currently used but can be used in future for
         # multiply attached R groups
 
         molblock = ctab_to_molblock(ctab)
-        mol = Chem.MolFromMolBlock(molblock, sanitize=False)
-        Chem.rdmolops.SanitizeMol(mol)
-        Chem.rdmolops.AssignStereochemistry(mol)
+        mol, rgroups = parse_molblock(molblock)
         
         component = {}
         component["mol"] = mol
         component["attachments"] = attachments
+        self.components.append(component)
+
+        return rgroups
+
+    def add_mol_component(self, mol: Mol) -> None:
+
+        component = {}
+        component["mol"] = mol
+        component["attachments"] = []
         self.components.append(component)
 
     def add_xe(self) -> None:
@@ -1332,10 +1314,9 @@ class RGroup():
         # adds pseudoatoms to the Mol structure to represent the linkage points
         # back to the parent structure
         # Also sets list of indices for these atoms.
-
+        
         for component in self.components:
             mol = component["mol"]
-
             component_is_H = False
             if Chem.MolToSmiles(mol) == "[HH]":
                 component_is_H = True
@@ -1357,6 +1338,18 @@ class RGroup():
                                 neighbor.SetAtomicNum(54)
                                 linker_added = True
 
+                        if atom.GetAtomicNum() == 0:
+                            xe_atom = Atom(54)
+                            edit_mol = EditableMol(mol)
+                            idx_a = atom.GetIdx()
+                            idx_b = edit_mol.AddAtom(xe_atom)
+                            edit_mol.AddBond(
+                                idx_a,
+                                idx_b,
+                                Chem.rdchem.BondType.SINGLE
+                            )
+                            mol = edit_mol.GetMol()
+                            linker_added = True
 
 
                         if not linker_added:
@@ -1386,10 +1379,10 @@ class RGroup():
                         
                         mol.UpdatePropertyCache()
 
-                if component_is_H:
-                    mol = Chem.MolFromSmiles("[Xe][H]")
-                    
-                component["mol"] = mol
+            if component_is_H:
+                mol = Chem.MolFromSmiles("[Xe][H]")
+
+            component["mol"] = mol
 
     def generate_component_inchis(self, rgroups: dict) -> None:
 
@@ -1397,9 +1390,9 @@ class RGroup():
 
         for component in self.components:
             mol = component["mol"]
-            markinchi = MarkInChI(
+            constructor = MarkinchiConstructor(
                 mol, rgroups=rgroups)
-            inchi = markinchi.get_markinchi()
+            inchi = constructor.get_markinchi()
             component["inchi"] = inchi
 
     def sort_components(self) -> None:
@@ -1576,11 +1569,11 @@ class VarAttach():
 
         # Generates the MarkInChI string for this VarAttach
 
-        markinchi = MarkInChI(
+        constructor = MarkinchiConstructor(
             self.mol, rgroups
         )
 
-        inchi = markinchi.get_markinchi()
+        inchi = constructor.get_markinchi()
 
         self.inchi = inchi
         return inchi
@@ -1637,7 +1630,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\test81.mol"
+            filename = "molfiles\\structures_for_testing\\ext122.mol"
             debug = False
     else:
         filename = args[0]

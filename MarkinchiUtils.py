@@ -2,6 +2,10 @@ from rdkit.Chem.Draw import ShowMol, MolsToImage
 from rdkit.Chem.rdchem import Mol
 from rdkit import Chem
 from copy import deepcopy
+import json
+import os
+
+ABBREVIATION_FILE = "abbreviations.json"
 
 def show(mols: list, 
          subImgSize: tuple = (200, 200), 
@@ -73,6 +77,7 @@ def parse_molfile(filename: str) -> tuple[Mol, dict]:
 
     core_ctab = ""
     rgroups = {}
+    abbr_rgroups = {}
 
     for line in molfile_lines:
 
@@ -141,11 +146,9 @@ def parse_molfile(filename: str) -> tuple[Mol, dict]:
 
             if line.find("END CTAB") != -1:
                 component_molblock = ctab_to_molblock(rgroup_ctab)
-                component = Chem.MolFromMolBlock(
-                    component_molblock, sanitize=False
-                    )
-                
-                Chem.rdmolops.SanitizeMol(component)
+                component, nested_abbrs = parse_molblock(component_molblock)
+                abbr_rgroups = {**nested_abbrs, **abbr_rgroups}
+
                 component = Chem.rdmolops.AddHs(component)
                 attach_idx = rgroup_attachments[0][1] - 1
                 atom = component.GetAtomWithIdx(attach_idx)
@@ -158,8 +161,20 @@ def parse_molfile(filename: str) -> tuple[Mol, dict]:
                         neighbor.SetProp("dummyLabel","*")
                         neighbor.SetProp("isParentLinker", "True")
                         linker_added = True
-
-
+                
+                if atom.GetAtomicNum() == 0:
+                    linker_atom = Chem.Atom(0)
+                    linker_atom.SetProp("dummyLabel", "*")
+                    linker_atom.SetProp("isParentLinker", "True")
+                    edit_mol = Chem.EditableMol(component)
+                    linker_idx = edit_mol.AddAtom(linker_atom)
+                    edit_mol.AddBond(
+                        atom.GetIdx(),
+                        linker_idx,
+                        Chem.rdchem.BondType.SINGLE
+                    )
+                    component = edit_mol.GetMol()
+                    linker_added = True
 
                 if not linker_added:
                     raise Exception("Invalid R group connection point")
@@ -194,9 +209,97 @@ def parse_molfile(filename: str) -> tuple[Mol, dict]:
                 pass
 
     core_molblock = ctab_to_molblock(core_ctab)
-    core_mol = Chem.MolFromMolBlock(core_molblock, sanitize=False)
-    Chem.rdmolops.SanitizeMol(core_mol)
+    core_mol, core_abbrs = parse_molblock(core_molblock)
+
+    abbr_rgroups = {**abbr_rgroups, **core_abbrs}
+
+    for id in abbr_rgroups.keys():
+        rgroup = []
+        for component in abbr_rgroups[id]:
+            for atom in component.GetAtoms():
+                if atom.GetAtomicNum() == 54:
+                    atom.SetAtomicNum(0)
+                    atom.SetProp("dummyLabel","*")
+                    atom.SetProp("isParentLinker", "True")
+            rgroup.append(component)
+        rgroups[id] = rgroup
+
     
     return core_mol, rgroups
 
+def parse_molblock(molblock: str) -> tuple[Mol, dict]:
+     
+    molblock, rgroups = abbreviations_to_rgroups(molblock)
+    mol = Chem.MolFromMolBlock(molblock, sanitize=False)
+    Chem.rdmolops.SanitizeMol(mol)
+    Chem.rdmolops.AssignStereochemistry(mol)
+
+    return mol, rgroups
+
+def abbreviations_to_rgroups(molblock: str) -> tuple[str, dict]:
+
+    abbr_dict = get_abbr_dict()
+
+    new_molblock = ""
+    present_abbrs = []
+    lines = molblock.split("\n")
+    
+    atom_block = False
+    for line in lines:
+
+        if atom_block:
+            element = line.split()[3]
+            if element.lower() in abbr_dict.keys():
+                id = abbr_dict[element.lower()]["id"]
+                line = line.replace(element, "R%i" % id)
+                line += " RGROUPS=(1 %i)" % id
+                present_abbrs.append(element.lower())
+
+        if line.find("BEGIN ATOM") != -1:
+            atom_block = True
+        if line.find("END ATOM") != -1:
+            atom_block = False
+
+        
+        new_molblock += line + "\n"
+
+    rgroups = {}
+    for abbr in present_abbrs:
+        rgroup = []
+        for option in abbr_dict[abbr]["options"]:
+            mol = Chem.MolFromInchi(option)
+            rgroup.append(mol)
+        id = abbr_dict[abbr]["id"]
+        rgroups[id] = rgroup
+    
+    return new_molblock, rgroups
+
+def get_abbr_dict() -> dict:
+
+    file = os.path.join(os.getcwd(), ABBREVIATION_FILE)
+    
+    with open(file) as f:
+        definitions = json.load(f)
+
+    abbr_dict = {}    
+    keys = sorted(definitions.keys())
+    
+    for i, key in enumerate(keys):
+        abbr_dict[key] = {}
+        abbr_dict[key]["id"] = 10000 + i
+        abbr_dict[key]["options"] = enumerate_options(key, definitions)
+
+    return abbr_dict
+
+def enumerate_options(key: str, definitions: dict) -> list:
+    
+    options = []
+
+    for option in definitions[key]:
+        if option in definitions.keys():
+            options += enumerate_options(option, definitions)
+        else:
+            options += [option]
+    
+    return options
     

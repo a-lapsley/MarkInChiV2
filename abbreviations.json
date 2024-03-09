@@ -1,0 +1,82 @@
+{
+        "halogen": [
+                "InChI=1S/FXe/c1-2",
+                "InChI=1S/ClXe/c1-2",
+                "InChI=1S/BrXe/c1-2",
+                "InChI=1S/IXe/c1-2"
+        ],
+        "methyl": [
+                "InChI=1S/CH3Xe/c1-2/h1H3"
+        ],
+        "ethyl":[
+                "InChI=1S/C2H5Xe/c1-2-3/h2H2,1H3"
+        ],
+        "propyl": [
+                "InChI=1S/C3H7Xe/c1-3(2)4/h3H,1-2H3",
+                "InChI=1S/C3H7Xe/c1-2-3-4/h2-3H2,1H3"
+        ],
+        "butyl": [
+                "InChI=1S/C4H9Xe/c1-2-3-4-5/h2-4H2,1H3",
+                "InChI=1S/C4H9Xe/c1-4(2)3-5/h4H,3H2,1-2H3",
+                "InChI=1S/C4H9Xe/c1-4(2,3)5/h1-3H3"
+        ],
+        "pentyl": [            
+                "InChI=1S/C5H11Xe/c1-4-5(2,3)6/h4H2,1-3H3",
+                "InChI=1S/C5H11Xe/c1-5(2,3)4-6/h4H2,1-3H3",
+                "InChI=1S/C5H11Xe/c1-2-3-4-5-6/h2-5H2,1H3",
+                "InChI=1S/C5H11Xe/c1-3-5(6)4-2/h5H,3-4H2,1-2H3",
+                "InChI=1S/C5H11Xe/c1-3-4-5(2)6/h5H,3-4H2,1-2H3",
+                "InChI=1S/C5H11Xe/c1-3-5(2)4-6/h5H,3-4H2,1-2H3",
+                "InChI=1S/C5H11Xe/c1-5(2)3-4-6/h5H,3-4H2,1-2H3",
+                "InChI=1S/C5H11Xe/c1-4(2)5(3)6/h4-5H,1-3H3"
+        ],
+        "hexyl": [
+                "InChI=1S/C6H13Xe/c1-4-6(3,7)5-2/h4-5H2,1-3H3",
+                "InChI=1S/C6H13Xe/c1-4-5-6(2,3)7/h4-5H2,1-3H3",
+                "InChI=1S/C6H13Xe/c1-4-6(2,3)5-7/h4-5H2,1-3H3",
+                "InChI=1S/C6H13Xe/c1-6(2,3)4-5-7/h4-5H2,1-3H3",
+                "InChI=1S/C6H13Xe/c1-2-3-4-5-6-7/h2-6H2,1H3",
+                "InChI=1S/C6H13Xe/c1-5(2)6(3,4)7/h5H,1-4H3",
+                "InChI=1S/C6H13Xe/c1-5(7)6(2,3)4/h5H,1-4H3",
+                "InChI=1S/C6H13Xe/c1-3-4-5-6(2)7/h6H,3-5H2,1-2H3",
+                "InChI=1S/C6H13Xe/c1-3-5-6(7)4-2/h6H,3-5H2,1-2H3",
+                "InChI=1S/C6H13Xe/c1-6(2)4-3-5-7/h6H,3-5H2,1-2H3",
+                "InChI=1S/C6H13Xe/c1-3-4-6(2)5-7/h6H,3-5H2,1-2H3",
+                "InChI=1S/C6H13Xe/c1-3-6(2)4-5-7/h6H,3-5H2,1-2H3",
+                "InChI=1S/C6H13Xe/c1-3-6(4-2)5-7/h6H,3-5H2,1-2H3",
+                "InChI=1S/C6H13Xe/c1-5(2)6(3)4-7/h5-6H,4H2,1-3H3",
+                "InChI=1S/C6H13Xe/c1-5(2)4-6(3)7/h5-6H,4H2,1-3H3",
+                "InChI=1S/C6H13Xe/c1-4-6(7)5(2)3/h5-6H,4H2,1-3H3",
+                "InChI=1S/C6H13Xe/c1-4-5(2)6(3)7/h5-6H,4H2,1-3H3"
+        ],
+        "c1toc2": [
+                "methyl",
+                "ethyl"
+        ],
+        "c1toc3": [
+                "methyl",
+                "ethyl",
+                "propyl"
+        ],
+        "c1toc4": [
+                "methyl",
+                "ethyl",
+                "propyl",
+                "butyl"
+        ],
+        "c1toc5": [
+                "methyl",
+                "ethyl",
+                "propyl",
+                "butyl",
+                "pentyl"
+        ],
+        "c1toc6": [
+                "methyl",
+                "ethyl",
+                "propyl",
+                "butyl",
+                "pentyl",
+                "hexyl"
+        ]
+}

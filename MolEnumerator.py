@@ -1,6 +1,7 @@
 from rdkit.Chem.rdchem import Mol, Atom, EditableMol
 from rdkit import Chem
 from molzip import molzip
+from MarkinchiUtils import show
 
 class MolEnumerator():
 
@@ -13,6 +14,8 @@ class MolEnumerator():
     def enumerate_markush_mol(self, mol: Mol, rgroups: dict) -> list:
         # Gets a list of all possible Mols for a Markush Mol and list of Rgroups
         
+        Chem.rdmolops.Kekulize(mol, clearAromaticFlags=True)
+
         # Get any R groups directly referenced by this Mol
         child_rgroups = {}
         rgroup_count = 0
@@ -53,7 +56,7 @@ class MolEnumerator():
         # Enumerate all list atoms
         new_mol_list = []
         for mol in mol_list:
-            enumerated_list = self.enumerate_listatoms(mol)
+            enumerated_list = self.enumerate_listatoms(mol, initial=True)
             new_mol_list += enumerated_list
 
         mol_list = new_mol_list
@@ -66,21 +69,30 @@ class MolEnumerator():
                 Chem.rdmolops.SanitizeMol(mol)
                 new_mol_list.append(mol)
             except:
+                show(mol)
+                Chem.rdmolops.SanitizeMol(mol)
                 print("Skipping an invalid molecule")
         
         mol_list = new_mol_list
 
         return mol_list
 
-    def enumerate_listatoms(self, mol: Mol) -> list:
+    def enumerate_listatoms(self, mol: Mol, initial: bool = False) -> list:
         #Enumerates all possibilities of listatoms in a Mol
         #Find the atoms with an atom list query
         
+        if initial:
+            for atom in mol.GetAtoms():
+                atom.ClearProp("molAtomMapNumber")
+                if atom.HasQuery():
+                    atom.SetNoImplicit(True)
+                    atom.SetProp("needsEnumerating", "True")
+        
         for atom in mol.GetAtoms():
-            atom.ClearProp("molAtomMapNumber")
-            if atom.HasQuery():
-                #Parse the atom SMARTS to get a list of elements it could be
+            if atom.HasProp("needsEnumerating"):
+            #Parse the atom SMARTS to get a list of elements it could be
                 smarts = atom.GetSmarts()
+                idx = atom.GetIdx()
                 if smarts != "*":
 
                     smarts = smarts.replace("[", "")
@@ -92,44 +104,26 @@ class MolEnumerator():
 
                     for part in smarts_parts:
                         atomic_nums.append(int(part))
-
-                    listatom_idx = atom.GetIdx()
-
+                    
                     new_list = []
 
-                    
-                    #For each element, replace the list atom with an atom of
-                    # that element
                     for atomic_num in atomic_nums:
                         new_mol = Chem.Mol(mol)
-                        Chem.rdmolops.Kekulize(new_mol, clearAromaticFlags=True)
-                        listatom = new_mol.GetAtomWithIdx(listatom_idx)
-                        new_atom = Atom(atomic_num)
-                        edit_mol = EditableMol(new_mol)
-                        new_atom_idx = edit_mol.AddAtom(new_atom)
+                        new_atom = new_mol.GetAtomWithIdx(idx)
+                        new_atom.SetAtomicNum(atomic_num)
+                        new_atom.ClearProp("needsEnumerating")
+                        new_atom.SetNoImplicit(True)
+                        new_atom.SetNumExplicitHs(0)
+                        new_atom.UpdatePropertyCache()
+                        valence = new_atom.GetTotalValence()
+                        pt = Chem.GetPeriodicTable()
+                        default_valence = pt.GetDefaultValence(atomic_num)
+                        new_atom.SetNumExplicitHs(default_valence - valence)
 
-                        for bond in listatom.GetBonds():
 
-                            if bond.GetBeginAtomIdx() == listatom_idx:
-                                new_bond_end = bond.GetEndAtomIdx()
-                            else:
-                                new_bond_end = bond.GetBeginAtomIdx()
-
-                            bond_type = bond.GetBondType()
-
-                            edit_mol.AddBond(
-                                new_atom_idx, new_bond_end, order=bond_type
-                            )
-
-                        edit_mol.RemoveAtom(listatom_idx)
-
-                        new_mol = edit_mol.GetMol()
-                        new_mol.UpdatePropertyCache()
                         Chem.rdmolops.SanitizeMol(new_mol)
-                        # For this new Mol with the replaced listatom, 
-                        # recursively replace further listatoms to ensure all
-                        # listatoms are dealt with
                         new_list += self.enumerate_listatoms(new_mol)
+                    
                     return new_list
 
         # If there are no listatoms left in this Mol, return it as a single
