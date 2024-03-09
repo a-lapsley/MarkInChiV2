@@ -1172,11 +1172,10 @@ class MarkinchiConstructor():
                     for part in smarts_parts:
                         atomic_nums.append(int(part))
 
-                    atomic_nums = sorted(atomic_nums)
+                    # Sort atomic numbers using the Hill ordering
+                    atomic_nums = self.sort_atomic_nums(atomic_nums)
 
                     idx = atom.GetIdx()
-
-                    
 
                     if 6 in atomic_nums:
                         atom.SetAtomicNum(6)
@@ -1263,6 +1262,39 @@ class MarkinchiConstructor():
 
         listatoms = sorted(listatoms, key=lambda item: item["sum"])
         return listatoms
+
+    def sort_atomic_nums(self, atomic_nums: list) -> list:
+
+        # Sorts the atomic numbers into Hill order
+        
+        symbols = []
+
+        periodic_table = Chem.rdchem.GetPeriodicTable()
+
+        for i in atomic_nums:
+            symbols.append(periodic_table.GetElementSymbol(i))
+        
+        symbols = sorted(symbols)
+
+        if "C" in symbols:
+            new_symbols = ["C"]
+
+            if "H" in symbols:
+                new_symbols.append("H")
+                symbols.remove("C")
+                symbols.remove("H")
+                new_symbols += symbols
+            else:
+                symbols.remove("C")
+                new_symbols += symbols
+
+            symbols = new_symbols
+
+        new_atomic_nums = []
+        for symbol in symbols:
+            new_atomic_nums.append(periodic_table.GetAtomicNumber(symbol))
+
+        return new_atomic_nums
 
 class RGroup():
 
@@ -1630,7 +1662,7 @@ if __name__ == "__main__":
     # This is just for testing purposes (e.g. when this script is run directly
     # from an IDE)
     if len(args) == 0:
-            filename = "molfiles\\structures_for_testing\\ext122.mol"
+            filename = "molfiles\\structures_for_testing\\ext5.mol"
             debug = False
     else:
         filename = args[0]
